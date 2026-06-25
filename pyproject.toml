@@ -1,0 +1,30 @@
+[project]
+name = "monocle"
+version = "0.1.0"
+description = "Measure common-mode failures in multi-monitor safety committees."
+readme = "README.md"
+authors = []
+requires-python = ">=3.12"
+dependencies = [
+    "litellm>=1.89.3",
+    "matplotlib>=3.11.0",
+    "numpy>=2.5.0",
+    "pandas>=3.0.3",
+    "pyarrow>=24.0.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "scipy>=1.18.0",
+    "tenacity>=9.1.4",
+]
+
+[project.scripts]
+monocle = "monocle.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

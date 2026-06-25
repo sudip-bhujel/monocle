@@ -1,0 +1,36 @@
+models:
+  - monitor_id: openai-nano-baseline
+    provider: openai
+    model_id: gpt-5.4-nano-2026-03-17
+    prompt_id: baseline
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-nano-independent-risk
+    provider: openai
+    model_id: gpt-5.4-nano-2026-03-17
+    prompt_id: independent-risk-analysis
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-nano-policy-checklist
+    provider: openai
+    model_id: gpt-5.4-nano-2026-03-17
+    prompt_id: policy-checklist
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-nano-adversarial-review
+    provider: openai
+    model_id: gpt-5.4-nano-2026-03-17
+    prompt_id: adversarial-review
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-nano-concise-binary
+    provider: openai
+    model_id: gpt-5.4-nano-2026-03-17
+    prompt_id: concise-binary-decision
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY

@@ -1,0 +1,36 @@
+models:
+  - monitor_id: llama-baseline
+    provider: openrouter
+    model_id: env:MONOCLE_LLAMA_MODEL_ID
+    prompt_id: baseline
+    family: llama
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: llama-independent-risk
+    provider: openrouter
+    model_id: env:MONOCLE_LLAMA_MODEL_ID
+    prompt_id: independent-risk-analysis
+    family: llama
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: llama-policy-checklist
+    provider: openrouter
+    model_id: env:MONOCLE_LLAMA_MODEL_ID
+    prompt_id: policy-checklist
+    family: llama
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: llama-adversarial-review
+    provider: openrouter
+    model_id: env:MONOCLE_LLAMA_MODEL_ID
+    prompt_id: adversarial-review
+    family: llama
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: llama-concise-binary
+    provider: openrouter
+    model_id: env:MONOCLE_LLAMA_MODEL_ID
+    prompt_id: concise-binary-decision
+    family: llama
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY

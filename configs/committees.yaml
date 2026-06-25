@@ -1,0 +1,27 @@
+committees:
+  - committee_id: h1-llama-same-family
+    members:
+      - llama-baseline
+      - llama-independent-risk
+      - llama-policy-checklist
+      - llama-adversarial-review
+      - llama-concise-binary
+    rule: any_flag
+  - committee_id: openai-gpt41-nano-full
+    members:
+      - openai-gpt41-nano-baseline
+      - openai-gpt41-nano-independent-risk
+      - openai-gpt41-nano-policy-checklist
+      - openai-gpt41-nano-adversarial-review
+      - openai-gpt41-nano-concise-binary
+    rule: any_flag
+  - committee_id: weak_pair
+    members:
+      - openai-gpt41-nano-adversarial-review
+      - openai-gpt41-nano-policy-checklist
+    rule: any_flag
+  - committee_id: baseline_weak_pair
+    members:
+      - openai-gpt41-nano-baseline
+      - openai-gpt41-nano-adversarial-review
+    rule: any_flag
