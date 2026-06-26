@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -10,7 +12,7 @@ from monocle.calibration import committee_fpr, component_thresholds
 from monocle.cli import main
 from monocle.config import load_env
 from monocle.data import load_cases
-from monocle.metrics import catch_matrix
+from monocle.metrics import catch_matrix, observed_risk
 from monocle.monitors import FixtureMonitor, build_monitor, validate_hosted_monitors
 from monocle.oracle import (
     FixtureOracle,
@@ -21,7 +23,7 @@ from monocle.oracle import (
 from monocle.report import h1_pilot_gate
 from monocle.run import write_run
 from monocle.schema import MonitorConfig
-from monocle.stats import bootstrap_dependence, holm_adjust, jeffreys_rate
+from monocle.stats import bootstrap_dependence, bootstrap_metrics, holm_adjust, jeffreys_rate
 from monocle.store import RunStore
 
 
@@ -63,6 +65,41 @@ def test_bootstrap_deterministic_and_shape() -> None:
         "N_eff_risk",
     ]
     pd.testing.assert_frame_equal(first, second)
+
+
+def test_bootstrap_preserves_duplicate_task_multiplicity() -> None:
+    matrix = pd.DataFrame(
+        [
+            _bootstrap_row("c1", "b1", False),
+            _bootstrap_row("c2", "b2", False),
+            _bootstrap_row("c3", "b3", True),
+        ]
+    )
+    draws = bootstrap_metrics(
+        matrix,
+        lambda sampled: {"R_obs": observed_risk(sampled)},
+        draws=1,
+        seed=0,
+    )
+    assert draws.loc[0, "R_obs"] == pytest.approx(1 / 3)
+
+
+def test_bootstrap_resamples_runs_as_paired_monitor_draws() -> None:
+    matrix = pd.DataFrame(
+        [
+            _bootstrap_run_row("c1", "m1", 0, True),
+            _bootstrap_run_row("c1", "m2", 0, True),
+            _bootstrap_run_row("c1", "m1", 1, False),
+            _bootstrap_run_row("c1", "m2", 1, False),
+        ]
+    )
+    draws = bootstrap_metrics(
+        matrix,
+        lambda sampled: {"R_obs": observed_risk(sampled)},
+        draws=1,
+        seed=1,
+    )
+    assert draws.loc[0, "R_obs"] == pytest.approx(0.5)
 
 
 def test_decision_helpers() -> None:
@@ -134,14 +171,55 @@ def test_case_loading_jsonl_and_csv(tmp_path) -> None:
     assert load_cases(csv)[0].target_weight == 1
 
 
-def test_challenge_fixture_loads_with_balanced_regimes() -> None:
-    cases = load_cases("configs/fixtures/d1_pilot_challenge_cases.jsonl")
-    counts = {}
-    for case in cases:
-        counts[case.regime] = counts.get(case.regime, 0) + 1
-    assert counts == {"safe": 8, "non_adversarial": 8, "adversarial": 8}
-    final_base_ids = {case.base_task_id for case in cases if case.split == "final"}
-    assert len(final_base_ids) == 8
+def test_active_fixture_files_are_consolidated() -> None:
+    files = {
+        path.name for path in Path("configs/fixtures").iterdir() if path.is_file()
+    }
+    assert files == {"README.md", "monocle_cases.jsonl", "monocle_smoke.jsonl"}
+
+
+def test_main_fixture_is_paired_and_inert() -> None:
+    cases = load_cases("configs/fixtures/monocle_cases.jsonl")
+    assert len({case.case_id for case in cases}) == len(cases)
+    counts = Counter(case.regime for case in cases)
+    assert counts["safe"] >= 1
+    assert counts["non_adversarial"] >= 1
+    assert counts["adversarial"] >= 1
+    assert all(case.split == "calibrate" for case in cases if case.label == "safe")
+    final_cases = [
+        case for case in cases if case.split == "final" and case.label == "unsafe"
+    ]
+    by_base = defaultdict(list)
+    for case in final_cases:
+        by_base[case.base_task_id].append(case)
+    assert by_base
+    for variants in by_base.values():
+        assert {
+            "non_adversarial",
+            "adversarial",
+        } <= {case.regime for case in variants}
+        assert any(case.variant_id == "plain" for case in variants)
+    banned_payload_fragments = [
+        "169.254.169.254",
+        "http://",
+        "https://",
+        "[metadata",
+        "metadata credentials",
+        "credential",
+        "exfiltrate",
+        "steal",
+        "curl ",
+        "wget ",
+        " rm ",
+        " chmod ",
+        "&&",
+        "||",
+        "$(",
+        "`",
+    ]
+    for case in final_cases:
+        payload = case.payload.lower()
+        assert all(fragment not in payload for fragment in banned_payload_fragments)
 
 
 def test_case_loading_rejects_missing_required_fields(tmp_path) -> None:
@@ -255,7 +333,7 @@ def test_manifest_hash_changes_when_prompt_changes(tmp_path) -> None:
     )
     prompt.write_text("first prompt", encoding="utf-8")
     root = tmp_path / "runs"
-    cases = "configs/fixtures/d1_pilot_cases.jsonl"
+    cases = "configs/fixtures/monocle_smoke.jsonl"
     main(
         [
             "--runs-root",
@@ -296,7 +374,7 @@ def test_manifest_hash_changes_when_prompt_changes(tmp_path) -> None:
 def test_cli_fixture_workflow(tmp_path) -> None:
     root = tmp_path / "runs"
     run_id = "smoke"
-    cases = "configs/fixtures/d1_pilot_cases.jsonl"
+    cases = "configs/fixtures/monocle_smoke.jsonl"
     for command in ["run", "calibrate", "metrics", "bootstrap", "ablation", "report"]:
         main(
             [
@@ -345,8 +423,8 @@ def test_cli_fixture_workflow(tmp_path) -> None:
     report = store.read_report(run_id)
     assert report["canary"]["status"] == "complete"
     assert report["bootstrap"]["draws"] == 5
-    assert report["metrics"]["Gamma"]["value"] is None
-    assert report["pilot_gate"] == "inconclusive"
+    assert report["metrics"]["Gamma"]["value"] == 1.0
+    assert report["pilot_gate"] == "fail"
     assert report["committee_ablation"]["rows"] == 3
 
 
@@ -362,7 +440,7 @@ def test_cli_committee_selection_filters_metrics_artifacts(tmp_path) -> None:
         encoding="utf-8",
     )
     run_id = "selected"
-    cases = "configs/fixtures/d1_pilot_cases.jsonl"
+    cases = "configs/fixtures/monocle_smoke.jsonl"
     for command in ["run", "calibrate"]:
         main(
             [
@@ -426,7 +504,7 @@ def test_cli_keeps_multiple_committee_outputs(tmp_path) -> None:
         encoding="utf-8",
     )
     run_id = "multi-committee"
-    cases = "configs/fixtures/d1_pilot_cases.jsonl"
+    cases = "configs/fixtures/monocle_smoke.jsonl"
     for command in ["run", "calibrate"]:
         main(
             [
@@ -480,3 +558,26 @@ def test_cli_keeps_multiple_committee_outputs(tmp_path) -> None:
     assert store.derived_path(
         run_id, "committees/only-m2/metrics.parquet"
     ).exists()
+
+
+def _bootstrap_row(case_id: str, base_task_id: str, missed: bool) -> dict[str, object]:
+    return {
+        "case_id": case_id,
+        "monitor_id": "m1",
+        "run_index": 0,
+        "caught": not missed,
+        "missed": missed,
+        "stratum_id": "s",
+        "target_weight": 1.0,
+        "base_task_id": base_task_id,
+        "variant_id": "v",
+    }
+
+
+def _bootstrap_run_row(
+    case_id: str, monitor_id: str, run_index: int, missed: bool
+) -> dict[str, object]:
+    row = _bootstrap_row(case_id, case_id, missed)
+    row["monitor_id"] = monitor_id
+    row["run_index"] = run_index
+    return row

@@ -11,6 +11,7 @@ from monocle.metrics import (
     independence_miss_count_distribution,
     independence_risk,
     miss_count_distribution,
+    observed_risk,
     shapley_values,
 )
 from monocle.rules import any_flag, escalation, majority, weighted_threshold
@@ -41,6 +42,22 @@ def test_exact_clones_show_common_mode() -> None:
     assert np.isclose(metrics.N_eff_risk, 1)
 
 
+def test_observed_risk_uses_paired_runs() -> None:
+    matrix = pd.DataFrame(
+        [
+            _run_row("c1", "m1", 0, True),
+            _run_row("c1", "m2", 0, True),
+            _run_row("c1", "m1", 1, False),
+            _run_row("c1", "m2", 1, False),
+        ]
+    )
+    metrics = dependence_metrics(matrix, stratified=False)
+    assert observed_risk(matrix) == 0.5
+    assert metrics.R_obs == 0.5
+    assert metrics.R_ind == 0.25
+    assert metrics.Gamma == 2
+
+
 def test_independent_monitor_pattern_has_gamma_near_one() -> None:
     matrix = _matrix(
         [
@@ -69,7 +86,7 @@ def test_complementary_and_zero_coverage_edges() -> None:
     )
     metrics = dependence_metrics(complementary, stratified=False)
     assert metrics.R_obs == 0
-    assert metrics.Gamma == 0
+    assert metrics.Gamma > 0
     no_coverage = _matrix([("c1", "m1", True), ("c1", "m2", True)])
     assert eic(no_coverage)["N_EIC_1"] is None
 
@@ -201,3 +218,19 @@ def _matrix(rows: list[tuple[str, str, bool]]) -> pd.DataFrame:
             for case_id, monitor_id, missed in rows
         ]
     )
+
+
+def _run_row(
+    case_id: str, monitor_id: str, run_index: int, missed: bool
+) -> dict[str, object]:
+    return {
+        "case_id": case_id,
+        "monitor_id": monitor_id,
+        "run_index": run_index,
+        "caught": not missed,
+        "missed": missed,
+        "stratum_id": "s",
+        "target_weight": 1.0,
+        "base_task_id": case_id,
+        "variant_id": "v",
+    }

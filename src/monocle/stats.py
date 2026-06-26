@@ -6,13 +6,7 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-from monocle.metrics import dependence_metrics
-
-
-def jeffreys_rate(successes: int, trials: int) -> float:
-    if trials < 0 or successes < 0 or successes > trials:
-        raise ValueError("invalid Bernoulli counts")
-    return (successes + 0.5) / (trials + 1.0)
+from monocle.metrics import dependence_metrics, jeffreys_rate
 
 
 def bootstrap_dependence(
@@ -99,13 +93,16 @@ def synthetic_power(effect: float, sd: float, n: int, alpha: float = 0.05) -> fl
 
 def _resample_runs(matrix: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
     parts = []
-    group_cols = ["case_id", "monitor_id"]
+    group_cols = ["case_id"]
     if "bootstrap_task_id" in matrix.columns:
         group_cols.append("bootstrap_task_id")
     for _, group in matrix.groupby(group_cols):
-        runs = group["run_index"].to_numpy()
+        runs = group["run_index"].drop_duplicates().to_numpy()
         sampled_runs = rng.choice(runs, size=len(runs), replace=True)
-        parts.extend(group[group["run_index"] == run] for run in sampled_runs)
+        for bootstrap_run_id, run in enumerate(sampled_runs):
+            run_rows = group[group["run_index"] == run].copy()
+            run_rows["bootstrap_run_id"] = bootstrap_run_id
+            parts.append(run_rows)
     return pd.concat(parts, ignore_index=True)
 
 

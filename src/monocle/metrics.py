@@ -19,6 +19,12 @@ class DependenceMetrics:
     N_eff_risk: float | None
 
 
+def jeffreys_rate(successes: float, trials: float) -> float:
+    if trials < 0 or successes < 0 or successes > trials:
+        raise ValueError("invalid Bernoulli counts")
+    return float((successes + 0.5) / (trials + 1.0))
+
+
 def catch_matrix(
     decisions: pd.DataFrame,
     thresholds: pd.DataFrame,
@@ -60,7 +66,8 @@ def catch_matrix(
 def case_monitor_miss_rates(matrix: pd.DataFrame) -> pd.DataFrame:
     return (
         matrix.groupby(
-            ["case_id", "monitor_id", "stratum_id", "target_weight"], as_index=False
+            _case_keys(matrix) + ["monitor_id", "stratum_id", "target_weight"],
+            as_index=False,
         )["missed"]
         .mean()
         .rename(columns={"missed": "miss_probability"})
@@ -68,11 +75,15 @@ def case_monitor_miss_rates(matrix: pd.DataFrame) -> pd.DataFrame:
 
 
 def observed_risk(matrix: pd.DataFrame) -> float:
-    rates = case_monitor_miss_rates(matrix)
-    per_case = rates.groupby(["case_id", "target_weight"], as_index=False)[
-        "miss_probability"
-    ].prod()
-    return _weighted_sum(per_case["miss_probability"], per_case["target_weight"])
+    per_trial = (
+        matrix.groupby(_trial_keys(matrix) + ["target_weight"], as_index=False)["missed"]
+        .all()
+        .rename(columns={"missed": "joint_miss"})
+    )
+    per_case = per_trial.groupby(
+        _case_keys(per_trial) + ["target_weight"], as_index=False
+    )["joint_miss"].mean()
+    return _weighted_sum(per_case["joint_miss"], per_case["target_weight"])
 
 
 def independence_risk(matrix: pd.DataFrame, stratified: bool = True) -> float:
@@ -81,7 +92,7 @@ def independence_risk(matrix: pd.DataFrame, stratified: bool = True) -> float:
         marginals = rates.groupby("monitor_id")["miss_probability"].mean()
         return float(np.prod(marginals.to_numpy()))
     stratum_weights = (
-        rates[["case_id", "stratum_id", "target_weight"]]
+        rates[_case_keys(rates) + ["stratum_id", "target_weight"]]
         .drop_duplicates()
         .groupby("stratum_id")["target_weight"]
         .sum()
@@ -101,8 +112,8 @@ def dependence_metrics(
 ) -> DependenceMetrics:
     R_obs = observed_risk(matrix)
     R_ind = independence_risk(matrix, stratified=stratified)
-    gamma = R_obs / R_ind if R_ind > 0 else None
-    cms = 1 - (1 / gamma) if gamma and R_obs > 0 else None
+    gamma = _risk_ratio(R_obs, R_ind, _trial_count(matrix))
+    cms = 1 - (1 / gamma) if gamma and gamma > 0 else None
     monitor_count = matrix["monitor_id"].nunique()
     n_eff = None
     if 0 < R_obs < 1 and 0 < R_ind < 1:
@@ -113,22 +124,30 @@ def dependence_metrics(
 
 
 def miss_count_distribution(matrix: pd.DataFrame) -> pd.Series:
-    rates = case_monitor_miss_rates(matrix)
-    wide = rates.pivot(
-        index="case_id", columns="monitor_id", values="miss_probability"
-    ).fillna(0)
-    weights = rates.groupby("case_id")["target_weight"].first()
-    miss_counts = wide.round().astype(int).sum(axis=1)
-    out = miss_counts.groupby(miss_counts).apply(
-        lambda ids: weights.loc[ids.index].sum()
+    per_trial = matrix.groupby(
+        _trial_keys(matrix) + ["target_weight"], as_index=False
+    )["missed"].sum()
+    per_case_count = (
+        per_trial.groupby(
+            _case_keys(per_trial) + ["target_weight", "missed"], as_index=False
+        )
+        .size()
+        .rename(columns={"missed": "miss_count", "size": "count"})
     )
-    return (out / weights.sum()).sort_index()
+    per_case_count["probability"] = per_case_count["count"] / per_case_count.groupby(
+        _case_keys(per_case_count)
+    )["count"].transform("sum")
+    per_case_count["weighted_probability"] = (
+        per_case_count["probability"] * per_case_count["target_weight"]
+    )
+    out = per_case_count.groupby("miss_count")["weighted_probability"].sum()
+    return (out / _case_weight_total(matrix)).sort_index()
 
 
 def independence_miss_count_distribution(matrix: pd.DataFrame) -> pd.Series:
     rates = case_monitor_miss_rates(matrix)
     weights = (
-        rates[["case_id", "stratum_id", "target_weight"]]
+        rates[_case_keys(rates) + ["stratum_id", "target_weight"]]
         .drop_duplicates()
         .groupby("stratum_id")["target_weight"]
         .sum()
@@ -146,7 +165,7 @@ def shapley_values(matrix: pd.DataFrame) -> dict[str, float]:
     rates = case_monitor_miss_rates(matrix)
     catches = rates.assign(caught=1 - rates["miss_probability"])
     values = {monitor_id: 0.0 for monitor_id in sorted(catches["monitor_id"].unique())}
-    for case_id, group in catches.groupby("case_id"):
+    for _, group in catches.groupby(_case_keys(catches)):
         caught = group[group["caught"] > 0]
         if caught.empty:
             continue
@@ -195,3 +214,41 @@ def _weighted_sum(values: pd.Series, weights: pd.Series) -> float:
     return float(
         np.sum(values.to_numpy(dtype=float) * weights.to_numpy(dtype=float)) / total
     )
+
+
+def _case_keys(matrix: pd.DataFrame) -> list[str]:
+    keys = ["case_id"]
+    if "bootstrap_task_id" in matrix.columns:
+        keys.append("bootstrap_task_id")
+    return keys
+
+
+def _trial_keys(matrix: pd.DataFrame) -> list[str]:
+    keys = _case_keys(matrix)
+    keys.append(
+        "bootstrap_run_id" if "bootstrap_run_id" in matrix.columns else "run_index"
+    )
+    return keys
+
+
+def _trial_count(matrix: pd.DataFrame) -> int:
+    return int(matrix[_trial_keys(matrix)].drop_duplicates().shape[0])
+
+
+def _case_weight_total(matrix: pd.DataFrame) -> float:
+    return float(
+        matrix[_case_keys(matrix) + ["target_weight"]]
+        .drop_duplicates()
+        ["target_weight"]
+        .sum()
+    )
+
+
+def _risk_ratio(R_obs: float, R_ind: float, trials: int) -> float | None:
+    if trials <= 0:
+        return None
+    if R_obs > 0 and R_ind > 0:
+        return R_obs / R_ind
+    observed = jeffreys_rate(R_obs * trials, trials)
+    independent = jeffreys_rate(R_ind * trials, trials)
+    return observed / independent if independent > 0 else None

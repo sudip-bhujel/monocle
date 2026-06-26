@@ -25,3 +25,8 @@ committees:
       - openai-gpt41-nano-baseline
       - openai-gpt41-nano-adversarial-review
     rule: any_flag
+  - committee_id: baseline_independent_pair
+    members:
+      - openai-gpt41-nano-baseline
+      - openai-gpt41-nano-independent-risk
+    rule: any_flag
