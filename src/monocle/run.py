@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
@@ -17,10 +18,13 @@ def execute(
     *,
     runs: int = 1,
     existing: pd.DataFrame | None = None,
+    workers: int = 4,
 ) -> pd.DataFrame:
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
     existing = _existing_frame(existing)
     completed = _completed_keys(existing)
-    decisions = []
+    jobs = []
     for case in cases:
         for monitor in monitors:
             for run_index in range(runs):
@@ -32,7 +36,12 @@ def execute(
                     cache_key,
                 ) in completed:
                     continue
-                decisions.append(monitor.judge(case, run_index).model_dump(mode="json"))
+                jobs.append((case, monitor, run_index))
+    if workers == 1:
+        decisions = [_execute_job(job) for job in jobs]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            decisions = list(pool.map(_execute_job, jobs))
     new = pd.DataFrame(decisions)
     if existing.empty:
         return new
@@ -53,6 +62,7 @@ def write_run(
     allow_hosted: bool = False,
     config_hash: str = "unknown",
     artifact_hashes: dict[str, str] | None = None,
+    workers: int = 4,
 ) -> pd.DataFrame:
     manifest = RunManifest(
         run_id=run_id,
@@ -64,7 +74,7 @@ def write_run(
         },
         artifact_hashes=artifact_hashes or {},
         allow_hosted=allow_hosted,
-        sampling={"runs": runs},
+        sampling={"runs": runs, "workers": workers},
         provider_settings={
             monitor.config.monitor_id: monitor.config.provider for monitor in monitors
         },
@@ -72,7 +82,7 @@ def write_run(
     existing = (
         store.read_decisions(run_id) if store.paths(run_id).decisions.exists() else None
     )
-    decisions = execute(cases, monitors, runs=runs, existing=existing)
+    decisions = execute(cases, monitors, runs=runs, existing=existing, workers=workers)
     store.write_manifest(manifest)
     store.write_decisions(run_id, decisions)
     return decisions
@@ -82,6 +92,11 @@ def _manifest_model_id(monitor: Monitor) -> str:
     if hasattr(monitor, "manifest_model_id"):
         return str(monitor.manifest_model_id())
     return monitor.config.model_id
+
+
+def _execute_job(job: tuple[Case, Monitor, int]) -> dict:
+    case, monitor, run_index = job
+    return monitor.judge(case, run_index).model_dump(mode="json")
 
 
 def _existing_frame(existing: pd.DataFrame | None) -> pd.DataFrame:

@@ -23,6 +23,13 @@ from monocle.stats import bootstrap_metrics, confidence_interval
 from monocle.store import RunStore
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> None:
     load_env()
     parser = argparse.ArgumentParser(prog="monocle")
@@ -45,6 +52,7 @@ def main(argv: list[str] | None = None) -> None:
         cmd.add_argument("--committee")
         cmd.add_argument("--experiment", default="configs/experiment.yaml")
         cmd.add_argument("--runs", type=int, default=3)
+        cmd.add_argument("--workers", type=_positive_int, default=4)
         cmd.add_argument("--draws", type=int, default=25)
         cmd.add_argument("--seed", type=int, default=1)
         cmd.add_argument("--allow-hosted", action="store_true")
@@ -83,6 +91,7 @@ def _run(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
         allow_hosted=args.allow_hosted,
         config_hash=hash_mapping(artifact_hashes),
         artifact_hashes=artifact_hashes,
+        workers=args.workers,
     )
 
 
@@ -135,9 +144,7 @@ def _bootstrap(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     draws = bootstrap_metrics(
         matrix, h1_metric_values, draws=args.draws, seed=args.seed
     )
-    draws.to_parquet(
-        store.derived_path(run_id, "bootstrap_draws.parquet"), index=False
-    )
+    draws.to_parquet(store.derived_path(run_id, "bootstrap_draws.parquet"), index=False)
     draws.to_parquet(
         _committee_path(store, run_id, committee, "bootstrap_draws.parquet"),
         index=False,
@@ -177,9 +184,7 @@ def _ablation(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
 
 def _report(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     committee = _report_committee(run_id, store, args)
-    rows = _read_report_metrics(
-        store, run_id, committee, selected=bool(args.committee)
-    )
+    rows = _read_report_metrics(store, run_id, committee, selected=bool(args.committee))
     if args.committee:
         store.write_metrics(run_id, rows)
         _write_committee_selection(store, run_id, committee)
@@ -294,9 +299,7 @@ def _primary_thresholds(
     return selected.copy()
 
 
-def _report_committee(
-    run_id: str, store: RunStore, args: argparse.Namespace
-) -> dict:
+def _report_committee(run_id: str, store: RunStore, args: argparse.Namespace) -> dict:
     if args.committee:
         available = sorted(store.read_decisions(run_id)["monitor_id"].unique())
         return _selected_committee(args, available)
@@ -399,9 +402,7 @@ def _committee_config(path: str | None, committee_id: str) -> dict:
     raise ValueError(f"unknown committee: {committee_id}")
 
 
-def _write_committee_selection(
-    store: RunStore, run_id: str, committee: dict
-) -> None:
+def _write_committee_selection(store: RunStore, run_id: str, committee: dict) -> None:
     _write_json(store.derived_path(run_id, "committee-selection.json"), committee)
     _write_json(
         _committee_path(store, run_id, committee, "committee-selection.json"),
@@ -528,7 +529,7 @@ def _canary(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     monitors = _load_monitors(args.models)
     validate_hosted_monitors(monitors, allow_hosted=args.allow_hosted)
     cases = load_cases(args.cases)[:2]
-    current = execute(cases, monitors, runs=1)
+    current = execute(cases, monitors, runs=1, workers=args.workers)
     baseline = store.read_decisions(run_id)
     summary = _canary_summary(baseline, current)
     report = (

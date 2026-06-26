@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
+import threading
+import time
 
 import pandas as pd
 import pytest
@@ -21,9 +23,14 @@ from monocle.oracle import (
     validate_fixture_oracle_boundary,
 )
 from monocle.report import h1_pilot_gate
-from monocle.run import write_run
+from monocle.run import KEY_COLUMNS, execute, write_run
 from monocle.schema import MonitorConfig
-from monocle.stats import bootstrap_dependence, bootstrap_metrics, holm_adjust, jeffreys_rate
+from monocle.stats import (
+    bootstrap_dependence,
+    bootstrap_metrics,
+    holm_adjust,
+    jeffreys_rate,
+)
 from monocle.store import RunStore
 
 
@@ -126,7 +133,9 @@ def test_calibration_uses_only_calibrate_safe_cases() -> None:
 
 
 def test_committee_fpr_does_not_flag_exact_threshold_ties() -> None:
-    cases = pd.DataFrame([{"case_id": "safe-cal", "label": "safe", "split": "calibrate"}])
+    cases = pd.DataFrame(
+        [{"case_id": "safe-cal", "label": "safe", "split": "calibrate"}]
+    )
     decisions = pd.DataFrame(
         [{"case_id": "safe-cal", "monitor_id": "m1", "raw_score": 0.2}]
     )
@@ -155,6 +164,58 @@ def test_write_run_resumes_without_duplicate_decisions(tmp_path) -> None:
     ).any()
 
 
+def test_execute_parallel_matches_sequential_fixture_results() -> None:
+    cases = load_cases()
+    monitors = [_fixture_monitor("m1"), _fixture_monitor("m2")]
+    sequential = execute(cases, monitors, runs=2, workers=1)
+    parallel = execute(cases, monitors, runs=2, workers=4)
+    pd.testing.assert_frame_equal(sequential, parallel)
+
+
+def test_execute_parallel_resumes_without_duplicate_decisions() -> None:
+    cases = load_cases()
+    monitors = [_fixture_monitor("m1"), _fixture_monitor("m2")]
+    existing = execute(cases, monitors, runs=1, workers=1)
+    resumed = execute(cases, monitors, runs=1, existing=existing, workers=4)
+    assert len(resumed) == len(existing)
+    assert not resumed.duplicated(KEY_COLUMNS).any()
+
+
+def test_execute_parallel_preserves_job_order_after_out_of_order_completion() -> None:
+    cases = load_cases()[:2]
+    monitor = DelayedFixtureMonitor(
+        MonitorConfig(
+            monitor_id="delayed",
+            provider="fixture",
+            model_id="fixture-delayed",
+            mechanism="fixture",
+        ),
+        delays={cases[0].case_id: 0.1},
+    )
+    decisions = execute(cases, [monitor], runs=1, workers=2)
+    assert decisions["case_id"].tolist() == [case.case_id for case in cases]
+
+
+def test_execute_rejects_invalid_worker_count() -> None:
+    with pytest.raises(ValueError, match="workers"):
+        execute(load_cases()[:1], [_fixture_monitor("m1")], workers=0)
+
+
+def test_execute_runs_jobs_concurrently() -> None:
+    barrier = threading.Barrier(2)
+    monitor = BarrierFixtureMonitor(
+        MonitorConfig(
+            monitor_id="barrier",
+            provider="fixture",
+            model_id="fixture-barrier",
+            mechanism="fixture",
+        ),
+        barrier,
+    )
+    decisions = execute(load_cases()[:2], [monitor], runs=1, workers=2)
+    assert len(decisions) == 2
+
+
 def test_case_loading_jsonl_and_csv(tmp_path) -> None:
     jsonl = tmp_path / "cases.jsonl"
     jsonl.write_text(
@@ -172,9 +233,7 @@ def test_case_loading_jsonl_and_csv(tmp_path) -> None:
 
 
 def test_active_fixture_files_are_consolidated() -> None:
-    files = {
-        path.name for path in Path("configs/fixtures").iterdir() if path.is_file()
-    }
+    files = {path.name for path in Path("configs/fixtures").iterdir() if path.is_file()}
     assert files == {"README.md", "monocle_cases.jsonl", "monocle_smoke.jsonl"}
 
 
@@ -387,6 +446,8 @@ def test_cli_fixture_workflow(tmp_path) -> None:
                 cases,
                 "--runs",
                 "2",
+                "--workers",
+                "2",
                 "--draws",
                 "5",
                 "--seed",
@@ -403,6 +464,7 @@ def test_cli_fixture_workflow(tmp_path) -> None:
     assert store.derived_path(run_id, "committee-ablation.parquet").exists()
     assert len(store.read_decisions(run_id)) == 4 * 2 * 2
     assert store.read_manifest(run_id).sampling["runs"] == 2
+    assert store.read_manifest(run_id).sampling["workers"] == 2
     thresholds = store.read_thresholds(run_id)
     assert set(thresholds["fpr_target"]) == {0.05, 0.01, 0.10}
     summary = json.loads(
@@ -474,17 +536,13 @@ def test_cli_committee_selection_filters_metrics_artifacts(tmp_path) -> None:
             ]
         )
     store = RunStore(root)
-    ablation = pd.read_parquet(
-        store.derived_path(run_id, "committee-ablation.parquet")
-    )
+    ablation = pd.read_parquet(store.derived_path(run_id, "committee-ablation.parquet"))
     assert set(ablation["monitors"]) == {"m1"}
     report = store.read_report(run_id)
     assert report["committee"]["committee_id"] == "only-m1"
     assert report["committee"]["members"] == ["m1"]
     assert report["committee_ablation"]["rows"] == 1
-    assert store.derived_path(
-        run_id, "committees/only-m1/metrics.parquet"
-    ).exists()
+    assert store.derived_path(run_id, "committees/only-m1/metrics.parquet").exists()
     assert store.derived_path(run_id, "committees/only-m1/report.json").exists()
 
 
@@ -552,12 +610,8 @@ def test_cli_keeps_multiple_committee_outputs(tmp_path) -> None:
     assert first_report["committee"]["committee_id"] == "only-m1"
     assert second_report["committee"]["committee_id"] == "only-m2"
     assert store.read_report(run_id)["committee"]["committee_id"] == "only-m2"
-    assert store.derived_path(
-        run_id, "committees/only-m1/metrics.parquet"
-    ).exists()
-    assert store.derived_path(
-        run_id, "committees/only-m2/metrics.parquet"
-    ).exists()
+    assert store.derived_path(run_id, "committees/only-m1/metrics.parquet").exists()
+    assert store.derived_path(run_id, "committees/only-m2/metrics.parquet").exists()
 
 
 def _bootstrap_row(case_id: str, base_task_id: str, missed: bool) -> dict[str, object]:
@@ -581,3 +635,34 @@ def _bootstrap_run_row(
     row["monitor_id"] = monitor_id
     row["run_index"] = run_index
     return row
+
+
+def _fixture_monitor(monitor_id: str) -> FixtureMonitor:
+    return FixtureMonitor(
+        MonitorConfig(
+            monitor_id=monitor_id,
+            provider="fixture",
+            model_id=f"fixture-{monitor_id}",
+            mechanism="fixture",
+        )
+    )
+
+
+class DelayedFixtureMonitor(FixtureMonitor):
+    def __init__(self, config: MonitorConfig, delays: dict[str, float]) -> None:
+        super().__init__(config)
+        self.delays = delays
+
+    def judge(self, case, run_index):
+        time.sleep(self.delays.get(case.case_id, 0.0))
+        return super().judge(case, run_index)
+
+
+class BarrierFixtureMonitor(FixtureMonitor):
+    def __init__(self, config: MonitorConfig, barrier: threading.Barrier) -> None:
+        super().__init__(config)
+        self.barrier = barrier
+
+    def judge(self, case, run_index):
+        self.barrier.wait(timeout=2)
+        return super().judge(case, run_index)

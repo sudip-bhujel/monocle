@@ -76,7 +76,9 @@ def case_monitor_miss_rates(matrix: pd.DataFrame) -> pd.DataFrame:
 
 def observed_risk(matrix: pd.DataFrame) -> float:
     per_trial = (
-        matrix.groupby(_trial_keys(matrix) + ["target_weight"], as_index=False)["missed"]
+        matrix.groupby(_trial_keys(matrix) + ["target_weight"], as_index=False)[
+            "missed"
+        ]
         .all()
         .rename(columns={"missed": "joint_miss"})
     )
@@ -124,9 +126,9 @@ def dependence_metrics(
 
 
 def miss_count_distribution(matrix: pd.DataFrame) -> pd.Series:
-    per_trial = matrix.groupby(
-        _trial_keys(matrix) + ["target_weight"], as_index=False
-    )["missed"].sum()
+    per_trial = matrix.groupby(_trial_keys(matrix) + ["target_weight"], as_index=False)[
+        "missed"
+    ].sum()
     per_case_count = (
         per_trial.groupby(
             _case_keys(per_trial) + ["target_weight", "missed"], as_index=False
@@ -238,8 +240,7 @@ def _trial_count(matrix: pd.DataFrame) -> int:
 def _case_weight_total(matrix: pd.DataFrame) -> float:
     return float(
         matrix[_case_keys(matrix) + ["target_weight"]]
-        .drop_duplicates()
-        ["target_weight"]
+        .drop_duplicates()["target_weight"]
         .sum()
     )
 

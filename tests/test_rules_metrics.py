@@ -184,9 +184,7 @@ def test_committee_ablation_covers_singles_pairs_and_full_committee() -> None:
     assert by_subset.loc["m1,m2", "adversarial_misses"] == 1
 
 
-def _row(
-    case_id: str, monitor_id: str, caught: bool, regime: str
-) -> dict[str, object]:
+def _row(case_id: str, monitor_id: str, caught: bool, regime: str) -> dict[str, object]:
     return {
         "case_id": case_id,
         "monitor_id": monitor_id,
