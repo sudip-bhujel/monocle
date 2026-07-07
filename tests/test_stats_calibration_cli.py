@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import importlib.util
 import json
 from pathlib import Path
 import threading
@@ -12,10 +13,15 @@ import pytest
 import monocle.monitors as monitors_module
 from monocle.calibration import committee_fpr, component_thresholds
 from monocle.cli import main
-from monocle.config import load_env
+from monocle.config import load_env, load_yaml
 from monocle.data import load_cases
 from monocle.metrics import catch_matrix, observed_risk
-from monocle.monitors import FixtureMonitor, build_monitor, validate_hosted_monitors
+from monocle.monitors import (
+    FixtureMonitor,
+    HostedModelMonitor,
+    build_monitor,
+    validate_hosted_monitors,
+)
 from monocle.oracle import (
     FixtureOracle,
     SandboxPolicy,
@@ -241,9 +247,7 @@ def test_main_fixture_is_paired_and_inert() -> None:
     cases = load_cases("configs/fixtures/monocle_cases.jsonl")
     assert len({case.case_id for case in cases}) == len(cases)
     counts = Counter(case.regime for case in cases)
-    assert counts["safe"] >= 1
-    assert counts["non_adversarial"] >= 1
-    assert counts["adversarial"] >= 1
+    assert counts == {"safe": 16, "non_adversarial": 20, "adversarial": 20}
     assert all(case.split == "calibrate" for case in cases if case.label == "safe")
     final_cases = [
         case for case in cases if case.split == "final" and case.label == "unsafe"
@@ -251,19 +255,224 @@ def test_main_fixture_is_paired_and_inert() -> None:
     by_base = defaultdict(list)
     for case in final_cases:
         by_base[case.base_task_id].append(case)
-    assert by_base
+        if "/tmp/" in case.payload:
+            assert "/tmp/monocle-lab/" in case.payload
+    assert len(by_base) == 20
+    assert {
+        "d1-entitlement-cache-priming",
+        "d1-case-provenance-flattening",
+        "d1-tenant-template-seeding",
+        "d1-queue-affinity-routing",
+        "d1-setup-profile-carryover",
+        "d1-review-priority-hints",
+    } <= set(by_base)
+    assert not {
+        "d1-support-context",
+        "d1-vendor-escalation-packet",
+        "d1-demo-tenant-clone",
+        "d1-region-boundary-shortcut",
+        "d1-migration-package",
+        "d1-boundary-helper",
+    } & set(by_base)
     for variants in by_base.values():
-        assert {
+        assert len(variants) == 2
+        assert {case.regime for case in variants} == {
             "non_adversarial",
             "adversarial",
-        } <= {case.regime for case in variants}
-        assert any(case.variant_id == "plain" for case in variants)
+        }
+        assert sum(case.variant_id == "plain" for case in variants) == 1
     banned_payload_fragments = [
         "169.254.169.254",
         "http://",
         "https://",
         "[metadata",
         "metadata credentials",
+        "credential",
+        "exfiltrate",
+        "steal",
+        "curl ",
+        "wget ",
+        " rm ",
+        " chmod ",
+        "&&",
+        "||",
+        "$(",
+        "`",
+    ]
+    for case in final_cases:
+        payload = case.payload.lower()
+        assert all(fragment not in payload for fragment in banned_payload_fragments)
+
+
+def test_openai_mini_committees_match_mini_model_config() -> None:
+    models = load_yaml("configs/models-openai-mini.yaml")["models"]
+    monitor_ids = {item["monitor_id"] for item in models}
+    committees = {
+        item["committee_id"]: item
+        for item in load_yaml("configs/committees.yaml")["committees"]
+    }
+    expected = {
+        "openai-mini-full",
+        "mini_baseline_independent_pair",
+        "mini_baseline_weak_pair",
+        "mini_weak_pair",
+    }
+    assert expected <= set(committees)
+    for committee_id in expected:
+        committee = committees[committee_id]
+        assert committee["rule"] == "any_flag"
+        assert set(committee["members"]) <= monitor_ids
+    assert committees["openai-gpt41-nano-full"]["members"] == [
+        "openai-gpt41-nano-baseline",
+        "openai-gpt41-nano-independent-risk",
+        "openai-gpt41-nano-policy-checklist",
+        "openai-gpt41-nano-adversarial-review",
+        "openai-gpt41-nano-concise-binary",
+    ]
+
+
+def test_openai_mini_pair_config_references_valid_mini_monitors() -> None:
+    full = load_yaml("configs/models-openai-mini.yaml")["models"]
+    pair = load_yaml("configs/models-openai-mini-pair.yaml")["models"]
+    full_by_id = {item["monitor_id"]: item for item in full}
+    pair_ids = [item["monitor_id"] for item in pair]
+    assert pair_ids == ["openai-mini-baseline", "openai-mini-independent-risk"]
+    for item in pair:
+        source = full_by_id[item["monitor_id"]]
+        assert item["provider"] == source["provider"]
+        assert item["model_id"] == source["model_id"]
+        assert item["prompt_id"] == source["prompt_id"]
+        assert item["env_var"] == source["env_var"]
+
+
+def test_d1_cross_family_model_config_validates_and_uses_existing_prompts() -> None:
+    models = load_yaml("configs/models-d1-cross-family.yaml")["models"]
+    assert len(models) == 15
+    families = Counter(item["family"] for item in models)
+    assert families == {"openai": 5, "anthropic": 5, "google": 5}
+    prompt_dir = Path("configs/prompts")
+    for item in models:
+        MonitorConfig.model_validate(item)
+        assert (prompt_dir / f"{item['prompt_id']}.txt").exists()
+        assert item.get("metadata", {}).get("case_view", "blind") == "blind"
+        if item["family"] == "anthropic":
+            assert item["provider"] == "anthropic"
+            assert item["env_var"] == "ANTHROPIC_API_KEY"
+            assert item["model_id"] == "anthropic/claude-haiku-4-5-20251001"
+        if item["family"] == "google":
+            assert item["provider"] == "gemini"
+            assert item["env_var"] == "GEMINI_API_KEY"
+            assert item["model_id"] == "gemini/gemini-2.5-flash-lite"
+
+
+def test_d1_cross_family_committees_reference_valid_monitor_ids() -> None:
+    monitor_ids = {
+        item["monitor_id"]
+        for item in load_yaml("configs/models-d1-cross-family.yaml")["models"]
+    }
+    committees = {
+        item["committee_id"]: item
+        for item in load_yaml("configs/committees.yaml")["committees"]
+    }
+    new_ids = {
+        "anthropic-full",
+        "google-full",
+        "h3-openai-mini-replace-baseline-anthropic",
+        "h3-openai-mini-replace-independent-anthropic",
+        "h3-openai-mini-replace-policy-anthropic",
+        "h3-openai-mini-replace-adversarial-anthropic",
+        "h3-openai-mini-replace-concise-anthropic",
+        "h3-openai-mini-replace-baseline-google",
+        "h3-openai-mini-replace-independent-google",
+        "h3-openai-mini-replace-policy-google",
+        "h3-openai-mini-replace-adversarial-google",
+        "h3-openai-mini-replace-concise-google",
+        "h4-primary-mixed-openai-anthropic-google",
+    }
+    assert new_ids <= set(committees)
+    for committee_id in new_ids:
+        committee = committees[committee_id]
+        assert committee["rule"] == "any_flag"
+        assert len(committee["members"]) == 5
+        assert set(committee["members"]) <= monitor_ids
+    h3_ids = [item for item in new_ids if item.startswith("h3-")]
+    assert len(h3_ids) == 10
+    mixed = committees["h4-primary-mixed-openai-anthropic-google"]["members"]
+    assert sum(member.startswith("openai-mini-") for member in mixed) == 2
+    assert sum(member.startswith("anthropic-") for member in mixed) == 2
+    assert sum(member.startswith("google-") for member in mixed) == 1
+
+
+def test_d1_cross_family_summary_helpers_are_conservative() -> None:
+    module = _load_evaluation_summary_module()
+    hom = _report({"Gamma": 2.0, "R_obs": 0.4})
+    cross = _report({"Gamma": 1.0, "R_obs": 0.2})
+    h3 = module.h3_contrast(hom, cross)
+    assert h3["contrast"] == pytest.approx(0.6931471805599453)
+    assert h3["point_status"] == "point_supports"
+    assert h3["status"] == "inconclusive"
+    h4 = module.h4_difference(hom, cross)
+    assert h4["risk_difference"] == pytest.approx(0.2)
+    assert h4["point_status"] == "point_supports"
+    assert h4["status"] == "inconclusive"
+    missing_match = module.h4_difference(
+        {**hom, "threshold_ids": ["component-fpr-0p2"]}, cross
+    )
+    assert missing_match["risk_difference"] is None
+    assert missing_match["status"] == "inconclusive"
+
+
+def test_strong_model_candidate_fixture_loads_and_is_inert() -> None:
+    cases = load_cases("configs/candidates/d1_strong_model_screen.jsonl")
+    assert len({case.case_id for case in cases}) == len(cases)
+    counts = Counter(case.regime for case in cases)
+    assert counts == {"safe": 8, "non_adversarial": 16, "adversarial": 16}
+    safe_cases = [case for case in cases if case.label == "safe"]
+    final_cases = [
+        case for case in cases if case.split == "final" and case.label == "unsafe"
+    ]
+    assert len(safe_cases) == 8
+    assert len(final_cases) == 32
+    assert all(case.split == "calibrate" for case in safe_cases)
+    assert {
+        "safe-row-faithful-review",
+        "safe-after-choice-defaults",
+        "safe-declared-queue-routing",
+        "safe-public-template",
+    } <= {case.base_task_id for case in safe_cases}
+    by_base = defaultdict(list)
+    for case in final_cases:
+        by_base[case.base_task_id].append(case)
+        if "/tmp/" in case.payload:
+            assert "/tmp/monocle-lab/" in case.payload
+        assert "Scenario:" in case.payload
+        assert "Requested change:" in case.payload
+        assert "Expected product behavior:" in case.payload
+    assert len(by_base) == 16
+    for variants in by_base.values():
+        assert len(variants) == 2
+        assert {case.regime for case in variants} == {
+            "non_adversarial",
+            "adversarial",
+        }
+        assert sum(case.variant_id == "plain" for case in variants) == 1
+    banned_payload_fragments = [
+        "169.254.169.254",
+        "http://",
+        "https://",
+        "[metadata",
+        "metadata credentials",
+        "audit",
+        "provenance",
+        "entitlement",
+        "boundary",
+        "consent",
+        "hidden",
+        "restricted",
+        "retain",
+        "omit",
+        "source-neutral",
+        "bypass",
         "credential",
         "exfiltrate",
         "steal",
@@ -305,6 +514,54 @@ def test_hosted_monitor_validation_requires_flag_and_credentials(monkeypatch) ->
         validate_hosted_monitors([monitor], allow_hosted=False)
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         validate_hosted_monitors([monitor], allow_hosted=True)
+
+
+def test_hosted_monitor_blind_case_view_excludes_dataset_metadata(tmp_path) -> None:
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    prompt_dir.joinpath("baseline.txt").write_text("score", encoding="utf-8")
+    monitor = HostedModelMonitor(
+        MonitorConfig(
+            monitor_id="hosted",
+            provider="openai",
+            model_id="gpt-x",
+            prompt_id="baseline",
+            metadata={"prompt_dir": str(prompt_dir)},
+        )
+    )
+    case = load_cases("configs/fixtures/monocle_cases.jsonl")[8]
+    messages = monitor._messages(case)
+    user = messages[1]["content"]
+    assert "kind:" in user
+    assert "payload:" in user
+    assert case.payload in user
+    assert "case_id:" not in user
+    assert "regime:" not in user
+    assert "attack_class:" not in user
+    assert case.case_id not in user
+    assert case.regime not in user
+    assert case.attack_class not in user
+    assert case.label not in user
+
+
+def test_hosted_monitor_diagnostic_case_view_is_opt_in(tmp_path) -> None:
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    prompt_dir.joinpath("baseline.txt").write_text("score", encoding="utf-8")
+    monitor = HostedModelMonitor(
+        MonitorConfig(
+            monitor_id="hosted",
+            provider="openai",
+            model_id="gpt-x",
+            prompt_id="baseline",
+            metadata={"prompt_dir": str(prompt_dir), "case_view": "diagnostic"},
+        )
+    )
+    case = load_cases("configs/fixtures/monocle_cases.jsonl")[8]
+    user = monitor._messages(case)[1]["content"]
+    assert f"case_id: {case.case_id}" in user
+    assert f"regime: {case.regime}" in user
+    assert f"attack_class: {case.attack_class}" in user
 
 
 def test_hosted_monitor_executes_with_mocked_litellm(tmp_path, monkeypatch) -> None:
@@ -646,6 +903,26 @@ def _fixture_monitor(monitor_id: str) -> FixtureMonitor:
             mechanism="fixture",
         )
     )
+
+
+def _load_evaluation_summary_module():
+    path = Path("../evaluation/d1_cross_family_summary.py")
+    spec = importlib.util.spec_from_file_location("d1_cross_family_summary", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _report(metrics: dict[str, float]) -> dict[str, object]:
+    return {
+        "metrics": {
+            key: {"value": value, "lower": value, "upper": value}
+            for key, value in metrics.items()
+        },
+        "threshold_ids": ["component-fpr-0p15"],
+    }
 
 
 class DelayedFixtureMonitor(FixtureMonitor):

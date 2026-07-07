@@ -1,6 +1,28 @@
 from __future__ import annotations
 
+import math
+
 import pandas as pd
+
+
+def _component_threshold(scores: list[float], fpr_target: float) -> float:
+    ordered = sorted(scores)
+    n = len(ordered)
+    allowed_fp = math.floor(fpr_target * n)
+    if allowed_fp <= 0:
+        return float(ordered[-1])
+    distinct = sorted(set(ordered))
+    if len(distinct) == 1:
+        return float(distinct[0])
+
+    candidates = [
+        (distinct[i - 1] + distinct[i]) / 2 for i in range(1, len(distinct))
+    ]
+    candidates.append(distinct[0] - (distinct[1] - distinct[0]) / 2)
+    for threshold in sorted(candidates):
+        if sum(score > threshold for score in ordered) <= allowed_fp:
+            return float(threshold)
+    return float(ordered[-1])
 
 
 def component_thresholds(
@@ -24,8 +46,9 @@ def component_thresholds(
     safe_scores = decisions[decisions["case_id"].isin(allowed_case_ids)]
     rows = []
     for monitor_id, group in safe_scores.groupby("monitor_id"):
-        quantile = max(0.0, min(1.0, 1 - fpr_target))
-        threshold = float(group["raw_score"].quantile(quantile, interpolation="higher"))
+        threshold = _component_threshold(
+            [float(s) for s in group["raw_score"]], fpr_target
+        )
         rows.append(
             {
                 "threshold_id": threshold_id,

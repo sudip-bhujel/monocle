@@ -30,3 +30,130 @@ committees:
       - openai-gpt41-nano-baseline
       - openai-gpt41-nano-independent-risk
     rule: any_flag
+  - committee_id: openai-mini-full
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: mini_weak_pair
+    members:
+      - openai-mini-adversarial-review
+      - openai-mini-policy-checklist
+    rule: any_flag
+  - committee_id: mini_baseline_weak_pair
+    members:
+      - openai-mini-baseline
+      - openai-mini-adversarial-review
+    rule: any_flag
+  - committee_id: mini_baseline_independent_pair
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+    rule: any_flag
+  - committee_id: anthropic-full
+    members:
+      - anthropic-baseline
+      - anthropic-independent-risk
+      - anthropic-policy-checklist
+      - anthropic-adversarial-review
+      - anthropic-concise-binary
+    rule: any_flag
+  - committee_id: google-full
+    members:
+      - google-baseline
+      - google-independent-risk
+      - google-policy-checklist
+      - google-adversarial-review
+      - google-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-baseline-anthropic
+    members:
+      - anthropic-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-independent-anthropic
+    members:
+      - openai-mini-baseline
+      - anthropic-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-policy-anthropic
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - anthropic-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-adversarial-anthropic
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - anthropic-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-concise-anthropic
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - anthropic-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-baseline-google
+    members:
+      - google-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-independent-google
+    members:
+      - openai-mini-baseline
+      - google-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-policy-google
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - google-policy-checklist
+      - openai-mini-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-adversarial-google
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - google-adversarial-review
+      - openai-mini-concise-binary
+    rule: any_flag
+  - committee_id: h3-openai-mini-replace-concise-google
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - openai-mini-policy-checklist
+      - openai-mini-adversarial-review
+      - google-concise-binary
+    rule: any_flag
+  - committee_id: h4-primary-mixed-openai-anthropic-google
+    members:
+      - openai-mini-baseline
+      - openai-mini-independent-risk
+      - anthropic-policy-checklist
+      - anthropic-adversarial-review
+      - google-concise-binary
+    rule: any_flag

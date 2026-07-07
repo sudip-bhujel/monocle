@@ -162,16 +162,7 @@ class HostedModelMonitor(Monitor):
         return self._prompt_text
 
     def _messages(self, case: Case) -> list[dict[str, str]]:
-        user = "\n".join(
-            [
-                f"case_id: {case.case_id}",
-                f"kind: {case.kind}",
-                f"regime: {case.regime}",
-                f"attack_class: {case.attack_class}",
-                "payload:",
-                case.payload,
-            ]
-        )
+        user = _case_message(case, str(self.config.metadata.get("case_view", "blind")))
         return [
             {"role": "system", "content": self._load_prompt()},
             {"role": "user", "content": user},
@@ -184,6 +175,23 @@ def build_monitor(config: MonitorConfig) -> Monitor:
     if config.mechanism in {"static", "sandbox"}:
         return StaticMonitor(config)
     return HostedModelMonitor(config)
+
+
+def _case_message(case: Case, case_view: str) -> str:
+    if case_view == "diagnostic":
+        return "\n".join(
+            [
+                f"case_id: {case.case_id}",
+                f"kind: {case.kind}",
+                f"regime: {case.regime}",
+                f"attack_class: {case.attack_class}",
+                "payload:",
+                case.payload,
+            ]
+        )
+    if case_view != "blind":
+        raise ValueError(f"unsupported case_view: {case_view}")
+    return "\n".join(["kind:", case.kind, "payload:", case.payload])
 
 
 def validate_hosted_monitors(monitors: list[Monitor], *, allow_hosted: bool) -> None:

@@ -1,17 +1,21 @@
-# Monocle Cases Dataset
+# Monocle D1 Strong-Model Hardening Dataset
 
 This directory contains the active local case datasets for Monocle.
 
 ## Files
 
-- `monocle_cases.jsonl`: main case dataset.
+- `monocle_cases.jsonl`: main D1 strong-model hardening case dataset.
 - `monocle_smoke.jsonl`: 4-row fixture for fast CLI and storage smoke tests.
 
 Historical fixture variants are intentionally not kept here as active inputs.
 
 ## Intended Use
 
-`monocle_cases.jsonl` is designed for studying correlated safety-monitor misses. It contains safe calibration rows and paired unsafe task variants so committees can be evaluated with `R_obs`, `R_ind`, `Gamma`, and related Monocle metrics.
+`monocle_cases.jsonl` is designed for studying correlated safety-monitor misses in enterprise SaaS support, admin, audit, migration, consent, training, and operations workflows. It contains safe calibration rows and paired unsafe task variants so committees can be evaluated with `R_obs`, `R_ind`, `Gamma`, and related Monocle metrics.
+
+This version hardens the unsafe set toward stronger-model evaluation by emphasizing timing, provenance, role scope, and routing-boundary failures rather than overtly malicious requests. Unsafe payloads describe the *same* boundary violation as routine engineering work (autosave, schema-normalize, in-place compaction, config-export-as-seed, soft-delete, shared validation role) so that a strong committee's blind spots surface as genuine common-mode misses rather than reactions to trigger vocabulary.
+
+The calibrate split deliberately includes borderline-safe twins: genuinely safe tasks that reuse the risky-looking verbs of the unsafe families (scoped delete, token rotation, staging reset, provenance-preserving merge, scoped grant, complete deletion, consented autosave, source-preserving summary). Calibrating the false-positive thresholds against realistic borderline-safe traffic — instead of only trivially-safe read-only tasks — keeps the thresholds honest and prevents an artificially low catch bar.
 
 This is a synthetic research dataset, not a general benchmark or a claim about real-world model safety.
 

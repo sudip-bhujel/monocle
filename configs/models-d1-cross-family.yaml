@@ -1,0 +1,106 @@
+models:
+  - monitor_id: openai-mini-baseline
+    provider: openai
+    model_id: gpt-5.4-mini
+    prompt_id: baseline
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-mini-independent-risk
+    provider: openai
+    model_id: gpt-5.4-mini
+    prompt_id: independent-risk-analysis
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-mini-policy-checklist
+    provider: openai
+    model_id: gpt-5.4-mini
+    prompt_id: policy-checklist
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-mini-adversarial-review
+    provider: openai
+    model_id: gpt-5.4-mini
+    prompt_id: adversarial-review
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: openai-mini-concise-binary
+    provider: openai
+    model_id: gpt-5.4-mini
+    prompt_id: concise-binary-decision
+    family: openai
+    mechanism: llm
+    env_var: OPENAI_API_KEY
+  - monitor_id: anthropic-baseline
+    provider: anthropic
+    model_id: anthropic/claude-haiku-4-5-20251001
+    prompt_id: baseline
+    family: anthropic
+    mechanism: llm
+    env_var: ANTHROPIC_API_KEY
+  - monitor_id: anthropic-independent-risk
+    provider: anthropic
+    model_id: anthropic/claude-haiku-4-5-20251001
+    prompt_id: independent-risk-analysis
+    family: anthropic
+    mechanism: llm
+    env_var: ANTHROPIC_API_KEY
+  - monitor_id: anthropic-policy-checklist
+    provider: anthropic
+    model_id: anthropic/claude-haiku-4-5-20251001
+    prompt_id: policy-checklist
+    family: anthropic
+    mechanism: llm
+    env_var: ANTHROPIC_API_KEY
+  - monitor_id: anthropic-adversarial-review
+    provider: anthropic
+    model_id: anthropic/claude-haiku-4-5-20251001
+    prompt_id: adversarial-review
+    family: anthropic
+    mechanism: llm
+    env_var: ANTHROPIC_API_KEY
+  - monitor_id: anthropic-concise-binary
+    provider: anthropic
+    model_id: anthropic/claude-haiku-4-5-20251001
+    prompt_id: concise-binary-decision
+    family: anthropic
+    mechanism: llm
+    env_var: ANTHROPIC_API_KEY
+  - monitor_id: google-baseline
+    provider: gemini
+    model_id: gemini/gemini-2.5-flash-lite
+    prompt_id: baseline
+    family: google
+    mechanism: llm
+    env_var: GEMINI_API_KEY
+  - monitor_id: google-independent-risk
+    provider: gemini
+    model_id: gemini/gemini-2.5-flash-lite
+    prompt_id: independent-risk-analysis
+    family: google
+    mechanism: llm
+    env_var: GEMINI_API_KEY
+  - monitor_id: google-policy-checklist
+    provider: gemini
+    model_id: gemini/gemini-2.5-flash-lite
+    prompt_id: policy-checklist
+    family: google
+    mechanism: llm
+    env_var: GEMINI_API_KEY
+  - monitor_id: google-adversarial-review
+    provider: gemini
+    model_id: gemini/gemini-2.5-flash-lite
+    prompt_id: adversarial-review
+    family: google
+    mechanism: llm
+    env_var: GEMINI_API_KEY
+  - monitor_id: google-concise-binary
+    provider: gemini
+    model_id: gemini/gemini-2.5-flash-lite
+    prompt_id: concise-binary-decision
+    family: google
+    mechanism: llm
+    env_var: GEMINI_API_KEY
