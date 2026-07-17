@@ -5,18 +5,6 @@ from collections.abc import Mapping
 import numpy as np
 
 
-def threshold_scores(
-    scores: Mapping[str, float], thresholds: Mapping[str, float]
-) -> dict[str, bool]:
-    missing = set(scores) - set(thresholds)
-    if missing:
-        raise ValueError(f"missing thresholds for monitors: {sorted(missing)}")
-    return {
-        monitor_id: score >= thresholds[monitor_id]
-        for monitor_id, score in scores.items()
-    }
-
-
 def any_flag(flags: Mapping[str, bool]) -> bool:
     return any(flags.values())
 

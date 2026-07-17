@@ -6,6 +6,7 @@ from math import log
 import pandas as pd
 
 from monocle.metrics import (
+    case_monitor_miss_rates,
     catch_matrix,
     dependence_metrics,
     eic,
@@ -87,8 +88,9 @@ def _matrix_metric_values(
             "CPR",
         ]
         return {f"{prefix}{name}": None for name in names}
-    metrics = dependence_metrics(matrix)
-    coverage = eic(matrix)
+    rates = case_monitor_miss_rates(matrix)
+    metrics = dependence_metrics(matrix, rates=rates)
+    coverage = eic(matrix, rates=rates)
     values = {
         f"{prefix}R_obs": metrics.R_obs,
         f"{prefix}R_ind": metrics.R_ind,
@@ -102,14 +104,11 @@ def _matrix_metric_values(
     )
     values.update(
         _distribution_values(
-            f"{prefix}P_ind_K", independence_miss_count_distribution(matrix)
+            f"{prefix}P_ind_K",
+            independence_miss_count_distribution(matrix, rates=rates),
         )
     )
     return values
-
-
-def h_not_implemented(name: str) -> dict[str, str]:
-    return {"status": "not_implemented", "analysis": name}
 
 
 def _committee_miss_counts(matrix: pd.DataFrame) -> dict[str, int]:

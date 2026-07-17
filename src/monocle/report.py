@@ -6,55 +6,22 @@ from typing import Any
 import pandas as pd
 
 
-def metrics_to_rows(metrics: dict[str, Any]) -> pd.DataFrame:
-    return pd.DataFrame(
-        [{"metric": key, "value": value} for key, value in metrics.items()]
-    )
-
-
-def write_demo_table(metrics: dict[str, Any], path: str | Path) -> Path:
+def write_h1_metrics_table(metrics: pd.DataFrame, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = "\n".join(
-        rf"    {key} & {format_value(value)} \\" for key, value in metrics.items()
-    )
-    table = "\n".join(
-        [
-            r"\begin{table}[htbp]",
-            r"  \caption{Monocle dry-run metrics.}",
-            r"  \label{tab:monocle-dry-run}",
-            r"  \centering\footnotesize",
-            r"  \begin{tabular}{@{}lr@{}}",
-            r"    \toprule",
-            r"    Metric & Value \\",
-            r"    \midrule",
-            rows,
-            r"    \bottomrule",
-            r"  \end{tabular}",
-            r"\end{table}",
-            "",
-        ]
-    )
-    path.write_text(table, encoding="utf-8")
-    return path
-
-
-def write_h1_pilot_table(metrics: pd.DataFrame, path: str | Path) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rows = "\n".join(
-        rf"    {row['metric']} & {format_value(row.get('value'))} & {format_value(row.get('lower'))} & {format_value(row.get('upper'))} & {row.get('status', 'pilot')} \\"
+        rf"    {row['metric']} & {format_value(row.get('value'))} & {format_value(row.get('lower'))} & {format_value(row.get('upper'))} \\"
         for _, row in metrics.iterrows()
     )
     table = "\n".join(
         [
             r"\begin{table}[htbp]",
-            r"  \caption{H1 pilot metrics.}",
-            r"  \label{tab:h1-pilot}",
+            r"  \caption{H1 metrics.}",
+            r"  \label{tab:h1-metrics}",
             r"  \centering\footnotesize",
-            r"  \begin{tabular}{@{}lrrrl@{}}",
+            r"  \begin{tabular}{@{}lrrr@{}}",
             r"    \toprule",
-            r"    Metric & Value & Lower & Upper & Status \\",
+            r"    Metric & Value & Lower & Upper \\",
             r"    \midrule",
             rows,
             r"    \bottomrule",
@@ -75,7 +42,7 @@ def provenance_report(
     threshold_ids: list[str] | None = None,
     bootstrap: dict[str, Any] | None = None,
     canary: dict[str, Any] | None = None,
-    pilot_gate: str | None = None,
+    h1_gate: str | None = None,
     committee_ablation: dict[str, Any] | None = None,
     committee: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -84,7 +51,7 @@ def provenance_report(
         {
             "run_id": run_id,
             "metrics": metrics,
-            "pilot_gate": pilot_gate or h1_pilot_gate(metrics),
+            "h1_gate": h1_gate or compute_h1_gate(metrics),
             "model_ids": manifest.get("model_ids", []),
             "prompt_ids": manifest.get("prompt_ids", []),
             "threshold_ids": threshold_ids or [],
@@ -104,7 +71,7 @@ def format_value(value: Any) -> str:
     return str(value)
 
 
-def h1_pilot_gate(metrics: dict[str, Any]) -> str:
+def compute_h1_gate(metrics: dict[str, Any]) -> str:
     gamma = _metric_value(metrics, "adversarial.Gamma")
     if gamma is None or pd.isna(gamma):
         return "inconclusive"

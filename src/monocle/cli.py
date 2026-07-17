@@ -11,12 +11,13 @@ from monocle.calibration import (
     committee_fpr,
     component_thresholds,
     cost_latency_summary,
+    crossfit_committee_fpr,
 )
-from monocle.config import fpr_targets, hash_files, hash_mapping, load_env, load_yaml
+from monocle.config import fpr_targets, hash_files, hash_mapping, load_env, load_experiment, load_yaml
 from monocle.data import load_cases
 from monocle.metrics import catch_matrix
 from monocle.monitors import FixtureMonitor, build_monitor, validate_hosted_monitors
-from monocle.report import provenance_report, write_h1_pilot_table
+from monocle.report import provenance_report, write_h1_metrics_table
 from monocle.run import execute, write_run
 from monocle.schema import MonitorConfig
 from monocle.stats import bootstrap_metrics, confidence_interval
@@ -45,17 +46,24 @@ def main(argv: list[str] | None = None) -> None:
         "canary",
     ]:
         cmd = sub.add_parser(name)
-        cmd.add_argument("--run-id", default="dry-run")
-        cmd.add_argument("--cases")
-        cmd.add_argument("--models")
-        cmd.add_argument("--committees", default="configs/committees.yaml")
-        cmd.add_argument("--committee")
-        cmd.add_argument("--experiment", default="configs/experiment.yaml")
-        cmd.add_argument("--runs", type=int, default=3)
-        cmd.add_argument("--workers", type=_positive_int, default=4)
-        cmd.add_argument("--draws", type=int, default=25)
-        cmd.add_argument("--seed", type=int, default=1)
-        cmd.add_argument("--allow-hosted", action="store_true")
+        _add_common_args(cmd)
+        if name == "run":
+            cmd.add_argument("--decision-bank")
+            cmd.add_argument("--decision-namespace", default="default")
+            cmd.add_argument("--no-decision-cache", action="store_true")
+    analyze = sub.add_parser(
+        "analyze",
+        help=(
+            "run metrics, bootstrap, ablation, and report for one or more committees "
+            "in one process (same outputs as the separate commands)"
+        ),
+    )
+    _add_common_args(analyze)
+    analyze.add_argument(
+        "--all-committees",
+        action="store_true",
+        help="analyze every committee listed in --committees",
+    )
     args = parser.parse_args(argv)
     store = RunStore(args.runs_root)
     if args.command == "run":
@@ -70,8 +78,28 @@ def main(argv: list[str] | None = None) -> None:
         _ablation(args.run_id, store, args)
     elif args.command == "report":
         _report(args.run_id, store, args)
+    elif args.command == "analyze":
+        _analyze(args.run_id, store, args)
     elif args.command == "canary":
         _canary(args.run_id, store, args)
+
+
+def _add_common_args(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--run-id", default="dry-run")
+    cmd.add_argument("--cases")
+    cmd.add_argument("--models")
+    cmd.add_argument("--committees", default="configs/committees.yaml")
+    cmd.add_argument("--committee")
+    cmd.add_argument("--experiment", default="configs/experiment.yaml")
+    cmd.add_argument(
+        "--audit-ledger",
+        help="private, frozen annotation/pair-review ledger to bind into run provenance",
+    )
+    cmd.add_argument("--runs", type=int, default=3)
+    cmd.add_argument("--workers", type=_positive_int, default=4)
+    cmd.add_argument("--draws", type=int, default=25)
+    cmd.add_argument("--seed", type=int, default=1)
+    cmd.add_argument("--allow-hosted", action="store_true")
 
 
 def _cases_frame(path: str | None = None) -> pd.DataFrame:
@@ -82,6 +110,11 @@ def _run(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     monitors = _load_monitors(args.models)
     validate_hosted_monitors(monitors, allow_hosted=args.allow_hosted)
     artifact_hashes = _artifact_hashes(args, monitors)
+    decision_bank = None
+    if not args.no_decision_cache and any(
+        monitor.config.mechanism == "llm" for monitor in monitors
+    ):
+        decision_bank = args.decision_bank or str(store.root / "decision-bank.csv")
     write_run(
         run_id,
         load_cases(args.cases),
@@ -92,6 +125,8 @@ def _run(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
         config_hash=hash_mapping(artifact_hashes),
         artifact_hashes=artifact_hashes,
         workers=args.workers,
+        decision_bank_path=decision_bank,
+        decision_namespace=args.decision_namespace,
     )
 
 
@@ -100,6 +135,7 @@ def _calibrate(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     decisions = store.read_decisions(run_id)
     cases = _cases_frame(args.cases)
     config_hash = _manifest_config_hash(store, run_id)
+    experiment = load_experiment(args.experiment)
     thresholds = pd.concat(
         [
             component_thresholds(
@@ -116,7 +152,15 @@ def _calibrate(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     store.write_thresholds(run_id, thresholds)
     store.derived_path(run_id, "calibration-summary.json").write_text(
         json.dumps(
-            _calibration_summary(decisions, cases, thresholds), indent=2, sort_keys=True
+            _calibration_summary(
+                decisions,
+                cases,
+                thresholds,
+                crossfit_folds=int(experiment.get("safe_crossfit_folds", 0)),
+                seed=int(experiment.get("seed", args.seed)),
+            ),
+            indent=2,
+            sort_keys=True,
         ),
         encoding="utf-8",
     )
@@ -125,6 +169,97 @@ def _calibrate(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
 def _metrics(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     decisions, thresholds, committee = _committee_inputs(run_id, store, args)
     cases = _cases_frame(args.cases)
+    _write_metrics(run_id, store, decisions, thresholds, cases, committee)
+
+
+def _bootstrap(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
+    decisions, thresholds, committee = _committee_inputs(run_id, store, args)
+    matrix = catch_matrix(decisions, thresholds, _cases_frame(args.cases))
+    _write_bootstrap(run_id, store, committee, matrix, draws=args.draws, seed=args.seed)
+
+
+def _ablation(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
+    decisions, thresholds, committee = _committee_inputs(run_id, store, args)
+    matrix = catch_matrix(decisions, thresholds, _cases_frame(args.cases))
+    _write_ablation(run_id, store, committee, matrix)
+
+
+def _report(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
+    committee = _report_committee(run_id, store, args)
+    _write_report(run_id, store, committee, selected=bool(args.committee))
+
+
+def _analyze(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
+    decisions = store.read_decisions(run_id)
+    thresholds = _primary_thresholds(store.read_thresholds(run_id), args)
+    cases = _cases_frame(args.cases)
+    available = sorted(decisions["monitor_id"].unique())
+    for committee_id in _analyze_committee_ids(args):
+        committee_args = argparse.Namespace(**vars(args))
+        committee_args.committee = committee_id
+        committee = _selected_committee(committee_args, available)
+        members = committee["members"]
+        missing_decisions = set(members) - set(decisions["monitor_id"])
+        missing_thresholds = set(members) - set(thresholds["monitor_id"])
+        if missing_decisions:
+            raise ValueError(
+                f"committee {committee['committee_id']} has no decisions for {sorted(missing_decisions)}"
+            )
+        if missing_thresholds:
+            raise ValueError(
+                f"committee {committee['committee_id']} has no thresholds for {sorted(missing_thresholds)}"
+            )
+        member_decisions = decisions[decisions["monitor_id"].isin(members)].copy()
+        member_thresholds = thresholds[thresholds["monitor_id"].isin(members)].copy()
+        matrix = catch_matrix(member_decisions, member_thresholds, cases)
+        _write_metrics(
+            run_id, store, member_decisions, member_thresholds, cases, committee
+        )
+        _write_bootstrap(
+            run_id,
+            store,
+            committee,
+            matrix,
+            draws=args.draws,
+            seed=args.seed,
+        )
+        _write_ablation(run_id, store, committee, matrix)
+        _write_report(run_id, store, committee, selected=True)
+
+
+def _analyze_committee_ids(args: argparse.Namespace) -> list[str]:
+    if args.all_committees:
+        return _committee_ids(args.committees)
+    if args.committee:
+        return [part.strip() for part in str(args.committee).split(",") if part.strip()]
+    raise ValueError("analyze requires --committee or --all-committees")
+
+
+def _committee_ids(path: str | None) -> list[str]:
+    if path is None or not Path(path).exists():
+        raise ValueError(f"committee config not found: {path}")
+    committees = load_yaml(path).get("committees", [])
+    if isinstance(committees, dict):
+        return list(committees.keys())
+    if isinstance(committees, list):
+        ids = [
+            str(item["committee_id"])
+            for item in committees
+            if item.get("committee_id") is not None
+        ]
+        if ids:
+            return ids
+    raise ValueError(f"no committees found in {path}")
+
+
+def _write_metrics(
+    run_id: str,
+    store: RunStore,
+    decisions: pd.DataFrame,
+    thresholds: pd.DataFrame,
+    cases: pd.DataFrame,
+    committee: dict,
+) -> None:
     summary = summarize_h1(decisions, thresholds, cases)
     rows = pd.DataFrame(summary)
     store.write_metrics(run_id, rows)
@@ -134,29 +269,43 @@ def _metrics(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     _write_committee_selection(store, run_id, committee)
 
 
-def _bootstrap(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
-    decisions, thresholds, committee = _committee_inputs(run_id, store, args)
-    matrix = catch_matrix(
-        decisions,
-        thresholds,
-        _cases_frame(args.cases),
+def _write_bootstrap(
+    run_id: str,
+    store: RunStore,
+    committee: dict,
+    matrix: pd.DataFrame,
+    *,
+    draws: int,
+    seed: int,
+) -> None:
+    draw_rows = bootstrap_metrics(
+        matrix,
+        h1_metric_values,
+        draws=draws,
+        seed=seed,
+        stratify_by="stratum_id",
     )
-    draws = bootstrap_metrics(
-        matrix, h1_metric_values, draws=args.draws, seed=args.seed
+    draw_rows.to_parquet(
+        store.derived_path(run_id, "bootstrap_draws.parquet"), index=False
     )
-    draws.to_parquet(store.derived_path(run_id, "bootstrap_draws.parquet"), index=False)
-    draws.to_parquet(
+    draw_rows.to_parquet(
         _committee_path(store, run_id, committee, "bootstrap_draws.parquet"),
         index=False,
     )
-    bootstrap_meta = {"draws": args.draws, "seed": args.seed}
+    bootstrap_meta = {
+        "draws": draws,
+        "seed": seed,
+        "cluster": "base_task_id",
+        "stratify_by": "stratum_id",
+        "interval": "percentile",
+    }
     _write_json(store.derived_path(run_id, "bootstrap_meta.json"), bootstrap_meta)
     _write_json(
         _committee_path(store, run_id, committee, "bootstrap_meta.json"),
         bootstrap_meta,
     )
     metrics = _read_committee_metrics(store, run_id, committee)
-    rows = _with_intervals(metrics, draws)
+    rows = _with_intervals(metrics, draw_rows)
     store.write_metrics(run_id, rows)
     rows.to_parquet(
         _committee_path(store, run_id, committee, "metrics.parquet"), index=False
@@ -164,13 +313,9 @@ def _bootstrap(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     _write_committee_selection(store, run_id, committee)
 
 
-def _ablation(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
-    decisions, thresholds, committee = _committee_inputs(run_id, store, args)
-    matrix = catch_matrix(
-        decisions,
-        thresholds,
-        _cases_frame(args.cases),
-    )
+def _write_ablation(
+    run_id: str, store: RunStore, committee: dict, matrix: pd.DataFrame
+) -> None:
     rows = committee_ablation(matrix)
     rows.to_parquet(
         store.derived_path(run_id, "committee-ablation.parquet"), index=False
@@ -182,15 +327,16 @@ def _ablation(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     _write_committee_selection(store, run_id, committee)
 
 
-def _report(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
-    committee = _report_committee(run_id, store, args)
-    rows = _read_report_metrics(store, run_id, committee, selected=bool(args.committee))
-    if args.committee:
+def _write_report(
+    run_id: str, store: RunStore, committee: dict, *, selected: bool
+) -> None:
+    rows = _read_report_metrics(store, run_id, committee, selected=selected)
+    if selected:
         store.write_metrics(run_id, rows)
         _write_committee_selection(store, run_id, committee)
-    write_h1_pilot_table(rows, store.derived_path(run_id, "h1-pilot-table.tex"))
-    write_h1_pilot_table(
-        rows, _committee_path(store, run_id, committee, "h1-pilot-table.tex")
+    write_h1_metrics_table(rows, store.derived_path(run_id, "h1-metrics-table.tex"))
+    write_h1_metrics_table(
+        rows, _committee_path(store, run_id, committee, "h1-metrics-table.tex")
     )
     manifest = store.read_manifest(run_id).model_dump(mode="json")
     thresholds = store.read_thresholds(run_id)
@@ -201,7 +347,6 @@ def _report(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
             "value": row.get("value"),
             "lower": row.get("lower"),
             "upper": row.get("upper"),
-            "status": row.get("status"),
         }
         for _, row in rows.iterrows()
     }
@@ -241,7 +386,12 @@ def _load_monitors(path: str | None) -> list:
         ]
     data = load_yaml(path)
     configs = data.get("models", [])
-    prompt_dir = Path(path).parent / "prompts"
+    adjacent_prompt_dir = Path(path).parent / "prompts"
+    prompt_dir = (
+        adjacent_prompt_dir
+        if adjacent_prompt_dir.is_dir()
+        else Path("configs/prompts")
+    )
     normalized = []
     for config in configs:
         item = dict(config)
@@ -257,7 +407,13 @@ def _load_monitors(path: str | None) -> list:
 def _artifact_hashes(args: argparse.Namespace, monitors: list) -> dict[str, str]:
     paths = [
         path
-        for path in [args.models, args.committees, args.experiment, args.cases]
+        for path in [
+            args.models,
+            args.committees,
+            args.experiment,
+            args.cases,
+            getattr(args, "audit_ledger", None),
+        ]
         if path
     ]
     for monitor in monitors:
@@ -265,7 +421,35 @@ def _artifact_hashes(args: argparse.Namespace, monitors: list) -> dict[str, str]
             str(monitor.config.metadata.get("prompt_dir", "configs/prompts"))
         )
         paths.append(prompt_dir / f"{monitor.config.prompt_id}.txt")
+    paths.extend(_candidate_sidecars(args.cases))
     return hash_files(paths)
+
+
+def _candidate_sidecars(cases_path: str | None) -> list[Path]:
+    """Include compact-candidate provenance artifacts in hosted-run hashes."""
+    if not cases_path:
+        return []
+    path = Path(cases_path)
+    if path.suffix != ".jsonl":
+        return []
+    manifest_path = path.with_suffix(".manifest.json")
+    if not manifest_path.exists():
+        return []
+    paths = [manifest_path]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for name in (
+        "coverage_catalog",
+        "family_codebook",
+    ):
+        item = manifest.get(name) or {}
+        relative_path = item.get("path")
+        if relative_path:
+            paths.append(path.parent / str(relative_path))
+    generator = manifest.get("generator") or {}
+    generator_path = generator.get("path")
+    if generator_path:
+        paths.append(Path(__file__).resolve().parents[2] / str(generator_path))
+    return paths
 
 
 def _with_intervals(metrics: pd.DataFrame, draws: pd.DataFrame) -> pd.DataFrame:
@@ -281,7 +465,6 @@ def _with_intervals(metrics: pd.DataFrame, draws: pd.DataFrame) -> pd.DataFrame:
                 "value": row["value"],
                 "lower": lower,
                 "upper": upper,
-                "status": "pilot",
             }
         )
     return pd.DataFrame(rows)
@@ -460,18 +643,40 @@ def _manifest_config_hash(store: RunStore, run_id: str) -> str:
 
 
 def _calibration_summary(
-    decisions: pd.DataFrame, cases: pd.DataFrame, thresholds: pd.DataFrame
+    decisions: pd.DataFrame,
+    cases: pd.DataFrame,
+    thresholds: pd.DataFrame,
+    *,
+    crossfit_folds: int = 0,
+    seed: int = 1,
 ) -> dict:
     rows = []
     for threshold_id, group in thresholds.groupby("threshold_id"):
-        rows.append(
-            {
-                "threshold_id": threshold_id,
-                "fpr_target": float(group["fpr_target"].iloc[0]),
-                "observed_committee_fpr": committee_fpr(decisions, cases, group),
-                "rule_id": "any_flag",
-            }
-        )
+        all_safe_fpr = committee_fpr(decisions, cases, group)
+        row = {
+            "threshold_id": threshold_id,
+            "fpr_target": float(group["fpr_target"].iloc[0]),
+            "observed_committee_fpr": all_safe_fpr,
+            "all_safe_committee_fpr": all_safe_fpr,
+            "paired_calibration_committee_fpr": committee_fpr(
+                decisions, cases, group, safe_split="calibrate"
+            ),
+            "family_disjoint_select_committee_fpr": committee_fpr(
+                decisions, cases, group, safe_split="select"
+            ),
+            "rule_id": "any_flag",
+        }
+        if crossfit_folds >= 2:
+            paired_safe_crossfit = crossfit_committee_fpr(
+                decisions,
+                cases,
+                fpr_target=float(group["fpr_target"].iloc[0]),
+                folds=crossfit_folds,
+                seed=seed,
+            )
+            row["crossfit"] = paired_safe_crossfit
+            row["paired_safe_crossfit"] = paired_safe_crossfit
+        rows.append(row)
     return {"thresholds": rows, "cost_latency": cost_latency_summary(decisions)}
 
 

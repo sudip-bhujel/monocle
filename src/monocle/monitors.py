@@ -9,7 +9,10 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import litellm
 from litellm import completion
+
+litellm.suppress_debug_info = True
 
 from monocle.schema import Case, Decision, MonitorConfig
 
@@ -25,6 +28,15 @@ class Monitor(ABC):
     def cache_key(self, case: Case, run_index: int) -> str:
         payload = f"{self.config.monitor_id}:{case.case_id}:{run_index}:{case.payload}"
         return sha256(payload.encode("utf-8")).hexdigest()
+
+    def request_json(self, case: Case, run_index: int, namespace: str) -> str | None:
+        return None
+
+    def request_fingerprint(
+        self, case: Case, run_index: int, namespace: str
+    ) -> str | None:
+        request = self.request_json(case, run_index, namespace)
+        return sha256(request.encode("utf-8")).hexdigest() if request else None
 
 
 class FixtureMonitor(Monitor):
@@ -51,10 +63,6 @@ class FixtureMonitor(Monitor):
             cost=self.config.cost_per_call,
             cache_key=self.cache_key(case, run_index),
         )
-
-
-class StaticMonitor(FixtureMonitor):
-    pass
 
 
 class HostedModelMonitor(Monitor):
@@ -102,18 +110,18 @@ class HostedModelMonitor(Monitor):
             )
         started = time.perf_counter()
         try:
-            kwargs = {
-                "model": model_id,
-                "messages": self._messages(case),
-                "temperature": float(self.config.metadata.get("temperature", 0)),
-                "max_tokens": int(self.config.metadata.get("max_tokens", 256)),
-            }
-            if self.config.endpoint:
-                kwargs["api_base"] = self.config.endpoint
+            kwargs = self._request_kwargs(case)
             response = completion(**kwargs)
             latency_s = time.perf_counter() - started
             raw_response = _response_text(response)
             parsed = _parse_score(raw_response)
+            usage = _response_usage(response)
+            provider_cost = usage["provider_cost"]
+            cost = (
+                provider_cost
+                if provider_cost is not None
+                else self.config.cost_per_call
+            )
             return Decision(
                 case_id=case.case_id,
                 monitor_id=self.config.monitor_id,
@@ -123,8 +131,12 @@ class HostedModelMonitor(Monitor):
                 rationale=parsed["rationale"],
                 raw_response=raw_response,
                 provider_request_id=_response_id(response),
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                provider_cost=provider_cost,
                 latency_s=latency_s,
-                cost=self.config.cost_per_call,
+                cost=cost,
+                billed_cost=cost,
                 cache_key=self.cache_key(case, run_index),
             )
         except Exception as exc:
@@ -146,6 +158,20 @@ class HostedModelMonitor(Monitor):
     def manifest_model_id(self) -> str:
         return self._resolved_model_id() or self.config.model_id
 
+    def request_json(self, case: Case, run_index: int, namespace: str) -> str:
+        request = {
+            "schema_version": 1,
+            "namespace": namespace,
+            "provider": self.config.provider,
+            "model_id": self._resolved_model_id(),
+            "revision": self.config.revision,
+            "endpoint": self.config.endpoint,
+            "case_id": case.case_id,
+            "run_index": run_index,
+            "request": self._request_kwargs(case),
+        }
+        return json.dumps(request, sort_keys=True, separators=(",", ":"))
+
     def _resolved_model_id(self) -> str | None:
         if self.config.model_id.startswith("env:"):
             return os.getenv(self.config.model_id.removeprefix("env:"))
@@ -161,6 +187,17 @@ class HostedModelMonitor(Monitor):
         self._prompt_text = path.read_text(encoding="utf-8")
         return self._prompt_text
 
+    def _request_kwargs(self, case: Case) -> dict[str, Any]:
+        kwargs = {
+            "model": self._resolved_model_id(),
+            "messages": self._messages(case),
+            "temperature": float(self.config.metadata.get("temperature", 0)),
+            "max_tokens": int(self.config.metadata.get("max_tokens", 256)),
+        }
+        if self.config.endpoint:
+            kwargs["api_base"] = self.config.endpoint
+        return kwargs
+
     def _messages(self, case: Case) -> list[dict[str, str]]:
         user = _case_message(case, str(self.config.metadata.get("case_view", "blind")))
         return [
@@ -173,7 +210,7 @@ def build_monitor(config: MonitorConfig) -> Monitor:
     if config.mechanism == "fixture":
         return FixtureMonitor(config)
     if config.mechanism in {"static", "sandbox"}:
-        return StaticMonitor(config)
+        return FixtureMonitor(config)
     return HostedModelMonitor(config)
 
 
@@ -221,6 +258,30 @@ def _response_id(response: Any) -> str | None:
     else:
         value = getattr(response, "id", None)
     return str(value) if value else None
+
+
+def _response_usage(response: Any) -> dict[str, int | float | None]:
+    usage = (
+        response.get("usage", {})
+        if isinstance(response, dict)
+        else getattr(response, "usage", {})
+    )
+    if not isinstance(usage, dict):
+        usage = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", None),
+            "completion_tokens": getattr(usage, "completion_tokens", None),
+        }
+    hidden = (
+        response.get("_hidden_params", {})
+        if isinstance(response, dict)
+        else getattr(response, "_hidden_params", {})
+    )
+    cost = hidden.get("response_cost") if isinstance(hidden, dict) else None
+    return {
+        "input_tokens": usage.get("prompt_tokens"),
+        "output_tokens": usage.get("completion_tokens"),
+        "provider_cost": float(cost) if cost is not None else None,
+    }
 
 
 def _parse_score(text: str) -> dict[str, Any]:

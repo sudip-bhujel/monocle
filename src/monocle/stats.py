@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Callable
 
 import numpy as np
@@ -14,8 +13,15 @@ def bootstrap_dependence(
     *,
     draws: int = 200,
     seed: int = 0,
+    stratify_by: str | None = "stratum_id",
 ) -> pd.DataFrame:
-    return bootstrap_metrics(matrix, _dependence_metric_values, draws=draws, seed=seed)
+    return bootstrap_metrics(
+        matrix,
+        _dependence_metric_values,
+        draws=draws,
+        seed=seed,
+        stratify_by=stratify_by,
+    )
 
 
 def bootstrap_metrics(
@@ -24,21 +30,34 @@ def bootstrap_metrics(
     *,
     draws: int = 200,
     seed: int = 0,
+    stratify_by: str | None = "stratum_id",
 ) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
-    tasks = matrix[["base_task_id"]].drop_duplicates()["base_task_id"].to_numpy()
+    task_groups = _bootstrap_task_groups(matrix, stratify_by)
+    task_index = _task_run_index(matrix)
     rows = []
     for draw in range(draws):
-        sampled_tasks = rng.choice(tasks, size=len(tasks), replace=True)
-        parts = []
-        for sample_index, task_id in enumerate(sampled_tasks):
-            task_rows = matrix[matrix["base_task_id"] == task_id].copy()
-            task_rows["bootstrap_task_id"] = f"{sample_index}:{task_id}"
-            parts.append(task_rows)
-        sampled = pd.concat(parts, ignore_index=True)
-        sampled = _resample_runs(sampled, rng)
+        sampled = _bootstrap_sample(matrix, task_index, task_groups, rng)
         rows.append({"draw": draw, **metric_fn(sampled)})
     return pd.DataFrame(rows)
+
+
+def _bootstrap_task_groups(
+    matrix: pd.DataFrame, stratify_by: str | None
+) -> list[np.ndarray]:
+    if stratify_by is None or stratify_by not in matrix.columns:
+        tasks = matrix[["base_task_id"]].drop_duplicates()["base_task_id"].to_numpy()
+        return [tasks]
+
+    assignments = matrix[["base_task_id", stratify_by]].drop_duplicates()
+    if assignments["base_task_id"].duplicated().any():
+        raise ValueError(
+            f"base tasks must belong to exactly one {stratify_by} for stratified bootstrap"
+        )
+    return [
+        group["base_task_id"].to_numpy()
+        for _, group in assignments.groupby(stratify_by, sort=True)
+    ]
 
 
 def confidence_interval(values: pd.Series, alpha: float = 0.05) -> tuple[float, float]:
@@ -63,47 +82,76 @@ def holm_adjust(p_values: dict[str, float]) -> dict[str, float]:
     return adjusted
 
 
-@dataclass(frozen=True)
-class DecisionLabel:
-    status: str
-    reason: str
+def _task_run_index(
+    matrix: pd.DataFrame,
+) -> dict[object, list[tuple[object, np.ndarray, dict[object, np.ndarray]]]]:
+    """Precompute per-task case/run row locations for fast bootstrap draws.
+
+    For each base_task_id, cases appear in first-seen order within that task, and
+    each case stores run_index values in first-seen order with original row labels.
+    """
+    index: dict[object, list[tuple[object, np.ndarray, dict[object, np.ndarray]]]] = {}
+    for task_id, task_df in matrix.groupby("base_task_id", sort=False):
+        cases: list[tuple[object, np.ndarray, dict[object, np.ndarray]]] = []
+        for case_id, case_df in task_df.groupby("case_id", sort=False):
+            runs = case_df["run_index"].drop_duplicates().to_numpy()
+            run_to_rows = {
+                run: case_df.index[case_df["run_index"] == run].to_numpy()
+                for run in runs
+            }
+            cases.append((case_id, runs, run_to_rows))
+        index[task_id] = cases
+    return index
 
 
-def classify_lower_bound(lower: float, criterion: float) -> DecisionLabel:
-    if lower > criterion:
-        return DecisionLabel("supported", "lower bound exceeds criterion")
-    if lower < -criterion:
-        return DecisionLabel("contradicted", "lower bound is opposite criterion")
-    return DecisionLabel("inconclusive", "interval does not settle the criterion")
+def _bootstrap_sample(
+    matrix: pd.DataFrame,
+    task_index: dict[
+        object, list[tuple[object, np.ndarray, dict[object, np.ndarray]]]
+    ],
+    task_groups: list[np.ndarray],
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    sampled_tasks: list[tuple[int, object]] = []
+    sample_index = 0
+    for tasks in task_groups:
+        chosen = rng.choice(tasks, size=len(tasks), replace=True)
+        for task_id in chosen:
+            sampled_tasks.append((sample_index, task_id))
+            sample_index += 1
 
+    # Match pandas groupby(["case_id", "bootstrap_task_id"], sort=True) RNG order.
+    groups: list[
+        tuple[object, str, np.ndarray, dict[object, np.ndarray]]
+    ] = []
+    for sample_index, task_id in sampled_tasks:
+        bootstrap_task_id = f"{sample_index}:{task_id}"
+        for case_id, runs, run_to_rows in task_index[task_id]:
+            groups.append((case_id, bootstrap_task_id, runs, run_to_rows))
+    groups.sort(key=lambda item: (item[0], item[1]))
 
-def equivalence_from_upper(upper: float, margin: float) -> DecisionLabel:
-    if upper < margin:
-        return DecisionLabel("supported", "upper bound is below equivalence margin")
-    return DecisionLabel("inconclusive", "upper bound does not establish equivalence")
-
-
-def synthetic_power(effect: float, sd: float, n: int, alpha: float = 0.05) -> float:
-    if sd <= 0 or n <= 0:
-        raise ValueError("sd and n must be positive")
-    z = abs(effect) / (sd / np.sqrt(n))
-    critical = 1.96 if alpha == 0.05 else 1.64
-    return float(1 / (1 + np.exp(-(z - critical))))
-
-
-def _resample_runs(matrix: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
-    parts = []
-    group_cols = ["case_id"]
-    if "bootstrap_task_id" in matrix.columns:
-        group_cols.append("bootstrap_task_id")
-    for _, group in matrix.groupby(group_cols):
-        runs = group["run_index"].drop_duplicates().to_numpy()
+    row_chunks: list[np.ndarray] = []
+    bootstrap_task_ids: list[np.ndarray] = []
+    bootstrap_run_ids: list[np.ndarray] = []
+    for _, bootstrap_task_id, runs, run_to_rows in groups:
         sampled_runs = rng.choice(runs, size=len(runs), replace=True)
         for bootstrap_run_id, run in enumerate(sampled_runs):
-            run_rows = group[group["run_index"] == run].copy()
-            run_rows["bootstrap_run_id"] = bootstrap_run_id
-            parts.append(run_rows)
-    return pd.concat(parts, ignore_index=True)
+            rows = run_to_rows[run]
+            row_chunks.append(rows)
+            n = len(rows)
+            bootstrap_task_ids.append(np.full(n, bootstrap_task_id, dtype=object))
+            bootstrap_run_ids.append(np.full(n, bootstrap_run_id, dtype=np.int64))
+
+    if not row_chunks:
+        out = matrix.iloc[0:0].copy()
+        out["bootstrap_task_id"] = pd.Series(dtype=object)
+        out["bootstrap_run_id"] = pd.Series(dtype=np.int64)
+        return out
+
+    out = matrix.loc[np.concatenate(row_chunks)].copy()
+    out["bootstrap_task_id"] = np.concatenate(bootstrap_task_ids)
+    out["bootstrap_run_id"] = np.concatenate(bootstrap_run_ids)
+    return out.reset_index(drop=True)
 
 
 def _dependence_metric_values(matrix: pd.DataFrame) -> dict[str, float | None]:

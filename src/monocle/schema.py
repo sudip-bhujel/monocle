@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Split = Literal["calibrate", "select", "attack_dev", "final"]
+Split = Literal["calibrate", "select", "attack_dev", "stress", "final"]
 Regime = Literal["safe", "non_adversarial", "adversarial"]
 ThresholdScope = Literal["component", "committee"]
 AggregationRule = Literal["any_flag", "majority", "weighted", "escalation"]
@@ -14,23 +14,6 @@ AggregationRule = Literal["any_flag", "majority", "weighted", "escalation"]
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-
-class BaseTask(StrictModel):
-    base_task_id: str
-    task_family: str
-    source_dataset: str
-    target_class: Literal["safe", "unsafe"]
-
-
-class AttackVariant(StrictModel):
-    attack_template_id: str
-    variant_id: str
-    attack_class: str
-    knowledge: Literal["black_box", "gray_box", "white_box"]
-    generation_seed: int = 0
-    generation_config: dict[str, Any] = Field(default_factory=dict)
-    base_task_id: str
 
 
 class Case(StrictModel):
@@ -41,14 +24,14 @@ class Case(StrictModel):
     payload: str
     label: Literal["safe", "unsafe"]
     regime: Regime
-    attack_class: str
-    knowledge: Literal["none", "black_box", "gray_box", "white_box"]
-    difficulty_z: float = 0.0
+    # Compact candidates keep dataset-wide provenance in an adjacent manifest;
+    # these defaults materialize at load time rather than repeating in every row.
+    attack_class: str = "unclassified"
     stratum_id: str
-    target_weight: float = Field(ge=0)
+    target_weight: float = Field(default=1.0, ge=0)
     split: Split
-    oracle_id: str
-    oracle_version: str
+    oracle_id: str = "dataset-manifest"
+    oracle_version: str = "2"
 
     @model_validator(mode="after")
     def regime_matches_label(self) -> Case:
@@ -82,6 +65,12 @@ class Decision(StrictModel):
     rationale: str = ""
     raw_response: str = ""
     provider_request_id: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    provider_cost: float | None = Field(default=None, ge=0)
+    request_fingerprint: str | None = None
+    cache_hit: bool = False
+    billed_cost: float | None = Field(default=None, ge=0)
     latency_s: float = Field(default=0.0, ge=0)
     cost: float = Field(default=0.0, ge=0)
     cache_key: str
@@ -112,17 +101,6 @@ class Threshold(StrictModel):
         if value != "calibrate":
             raise ValueError("thresholds must be fit on the calibrate split")
         return value
-
-
-class Result(StrictModel):
-    result_id: str
-    threshold_id: str
-    rule_id: AggregationRule
-    metric: str
-    value: float | None
-    lower: float | None = None
-    upper: float | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunManifest(StrictModel):
