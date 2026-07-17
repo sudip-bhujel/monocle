@@ -1,35 +1,4 @@
 committees:
-  - committee_id: h1-llama-same-family
-    members:
-      - llama-baseline
-      - llama-independent-risk
-      - llama-policy-checklist
-      - llama-adversarial-review
-      - llama-concise-binary
-    rule: any_flag
-  - committee_id: openai-gpt41-nano-full
-    members:
-      - openai-gpt41-nano-baseline
-      - openai-gpt41-nano-independent-risk
-      - openai-gpt41-nano-policy-checklist
-      - openai-gpt41-nano-adversarial-review
-      - openai-gpt41-nano-concise-binary
-    rule: any_flag
-  - committee_id: weak_pair
-    members:
-      - openai-gpt41-nano-adversarial-review
-      - openai-gpt41-nano-policy-checklist
-    rule: any_flag
-  - committee_id: baseline_weak_pair
-    members:
-      - openai-gpt41-nano-baseline
-      - openai-gpt41-nano-adversarial-review
-    rule: any_flag
-  - committee_id: baseline_independent_pair
-    members:
-      - openai-gpt41-nano-baseline
-      - openai-gpt41-nano-independent-risk
-    rule: any_flag
   - committee_id: openai-mini-full
     members:
       - openai-mini-baseline
@@ -37,21 +6,6 @@ committees:
       - openai-mini-policy-checklist
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
-    rule: any_flag
-  - committee_id: mini_weak_pair
-    members:
-      - openai-mini-adversarial-review
-      - openai-mini-policy-checklist
-    rule: any_flag
-  - committee_id: mini_baseline_weak_pair
-    members:
-      - openai-mini-baseline
-      - openai-mini-adversarial-review
-    rule: any_flag
-  - committee_id: mini_baseline_independent_pair
-    members:
-      - openai-mini-baseline
-      - openai-mini-independent-risk
     rule: any_flag
   - committee_id: anthropic-full
     members:
@@ -69,7 +23,7 @@ committees:
       - google-adversarial-review
       - google-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-baseline-anthropic
+  - committee_id: openai-mini-replace-baseline-anthropic
     members:
       - anthropic-baseline
       - openai-mini-independent-risk
@@ -77,7 +31,7 @@ committees:
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-independent-anthropic
+  - committee_id: openai-mini-replace-independent-anthropic
     members:
       - openai-mini-baseline
       - anthropic-independent-risk
@@ -85,7 +39,7 @@ committees:
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-policy-anthropic
+  - committee_id: openai-mini-replace-policy-anthropic
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk
@@ -93,7 +47,7 @@ committees:
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-adversarial-anthropic
+  - committee_id: openai-mini-replace-adversarial-anthropic
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk
@@ -101,7 +55,7 @@ committees:
       - anthropic-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-concise-anthropic
+  - committee_id: openai-mini-replace-concise-anthropic
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk
@@ -109,7 +63,7 @@ committees:
       - openai-mini-adversarial-review
       - anthropic-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-baseline-google
+  - committee_id: openai-mini-replace-baseline-google
     members:
       - google-baseline
       - openai-mini-independent-risk
@@ -117,7 +71,7 @@ committees:
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-independent-google
+  - committee_id: openai-mini-replace-independent-google
     members:
       - openai-mini-baseline
       - google-independent-risk
@@ -125,7 +79,7 @@ committees:
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-policy-google
+  - committee_id: openai-mini-replace-policy-google
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk
@@ -133,7 +87,7 @@ committees:
       - openai-mini-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-adversarial-google
+  - committee_id: openai-mini-replace-adversarial-google
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk
@@ -141,7 +95,7 @@ committees:
       - google-adversarial-review
       - openai-mini-concise-binary
     rule: any_flag
-  - committee_id: h3-openai-mini-replace-concise-google
+  - committee_id: openai-mini-replace-concise-google
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk
@@ -149,7 +103,7 @@ committees:
       - openai-mini-adversarial-review
       - google-concise-binary
     rule: any_flag
-  - committee_id: h4-primary-mixed-openai-anthropic-google
+  - committee_id: mixed-openai-anthropic-google
     members:
       - openai-mini-baseline
       - openai-mini-independent-risk

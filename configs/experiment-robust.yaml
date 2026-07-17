@@ -1,9 +1,0 @@
-experiment:
-  # Primary FPR target is listed first. At n=16 calibration points the
-  # false-positive budget is floor(fpr * n); budgets below 2 (fpr < 0.125)
-  # collapse the per-monitor threshold onto the single most-suspicious safe
-  # score, so the identifiable operating range starts at ~0.15, which is the
-  # primary reporting point; other targets are retained for the operating curve.
-  fpr_targets: [0.15, 0.20, 0.10, 0.05, 0.01]
-  bootstrap_draws: 200
-  seed: 1
