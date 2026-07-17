@@ -1040,6 +1040,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "tenacity" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -1058,6 +1059,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "scipy", specifier = ">=1.18.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "tqdm", specifier = ">=4.67.0" },
 ]
 
 [package.metadata.requires-dev]

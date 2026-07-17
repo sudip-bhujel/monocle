@@ -11,4 +11,6 @@ wheels/
 
 # runs
 runs/
+/data/
 .env
+.DS_Store
