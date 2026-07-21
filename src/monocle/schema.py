@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Split = Literal["calibrate", "select", "attack_dev", "stress", "final"]
+Split = Literal["calibrate", "select", "holdout", "attack_dev", "stress", "final"]
 Regime = Literal["safe", "non_adversarial", "adversarial"]
 ThresholdScope = Literal["component", "committee"]
 AggregationRule = Literal["any_flag", "majority", "weighted", "escalation"]
@@ -24,14 +24,20 @@ class Case(StrictModel):
     payload: str
     label: Literal["safe", "unsafe"]
     regime: Regime
-    # Compact candidates keep dataset-wide provenance in an adjacent manifest;
-    # these defaults materialize at load time rather than repeating in every row.
     attack_class: str = "unclassified"
     stratum_id: str
     target_weight: float = Field(default=1.0, ge=0)
     split: Split
-    oracle_id: str = "dataset-manifest"
-    oracle_version: str = "2"
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_oracle_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        cleaned = dict(value)
+        cleaned.pop("oracle_id", None)
+        cleaned.pop("oracle_version", None)
+        return cleaned
 
     @model_validator(mode="after")
     def regime_matches_label(self) -> Case:
@@ -90,6 +96,8 @@ class Threshold(StrictModel):
     scope: ThresholdScope
     score_transform: str = "identity"
     threshold: float = Field(ge=0, le=1)
+    achieved_fpr: float | None = Field(default=None, ge=0, le=1)
+    exact_target_attainable: bool | None = None
     config_hash: str
     frozen_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     monitor_id: str | None = None
@@ -106,15 +114,23 @@ class Threshold(StrictModel):
 class RunManifest(StrictModel):
     run_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    code_hash: str = "unknown"
     config_hash: str = "unknown"
     model_ids: list[str] = Field(default_factory=list)
     prompt_ids: list[str] = Field(default_factory=list)
-    provider_names: dict[str, str] = Field(default_factory=dict)
     artifact_hashes: dict[str, str] = Field(default_factory=dict)
     allow_hosted: bool = False
     sampling: dict[str, Any] = Field(default_factory=dict)
-    provider_settings: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        cleaned = dict(value)
+        cleaned.pop("code_hash", None)
+        cleaned.pop("provider_names", None)
+        cleaned.pop("provider_settings", None)
+        return cleaned
 
 
 class RunPaths(StrictModel):

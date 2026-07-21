@@ -7,8 +7,6 @@ from pathlib import Path
 
 from monocle.schema import Case
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
 
 def synthetic_cases() -> list[Case]:
     return [
@@ -24,8 +22,6 @@ def synthetic_cases() -> list[Case]:
             stratum_id="safe",
             target_weight=1.0,
             split="calibrate",
-            oracle_id="fixture",
-            oracle_version="1",
         ),
         Case(
             case_id="unsafe-final-1",
@@ -39,8 +35,6 @@ def synthetic_cases() -> list[Case]:
             stratum_id="shell:routine",
             target_weight=1.0,
             split="final",
-            oracle_id="fixture",
-            oracle_version="1",
         ),
         Case(
             case_id="unsafe-final-2",
@@ -54,8 +48,6 @@ def synthetic_cases() -> list[Case]:
             stratum_id="code:obfuscation",
             target_weight=1.0,
             split="final",
-            oracle_id="fixture",
-            oracle_version="1",
         ),
     ]
 
@@ -83,13 +75,7 @@ def load_cases(path: str | Path | None = None) -> list[Case]:
 def _validate_adjacent_manifest(
     path: Path, contents: bytes, rows: list[dict]
 ) -> None:
-    """Bind compact candidate rows to their manifest when one is present.
-
-    Full fixtures remain self-contained JSONL and have no adjacent manifest.  A
-    compact candidate, however, relies on manifest-declared defaults and audit
-    metadata; silently accepting a mismatched sidecar would make its provenance
-    claims unenforceable.
-    """
+    """Validate dataset integrity metadata when an adjacent manifest is present."""
     manifest_path = path.with_suffix(".manifest.json")
     if not manifest_path.exists():
         return
@@ -110,52 +96,13 @@ def _validate_adjacent_manifest(
 
     for name, expected in manifest.get("materialized_defaults", {}).items():
         if name not in Case.model_fields:
-            raise ValueError(f"unknown materialized default {name!r} in {manifest_path}")
+            continue
         actual = Case.model_fields[name].default
         if actual != expected:
             raise ValueError(
                 f"manifest default for {name!r} is {expected!r}, "
                 f"but runtime materializes {actual!r}"
             )
-
-    for name in (
-        "coverage_catalog",
-        "family_codebook",
-    ):
-        _validate_manifest_artifact(path.parent, manifest.get(name), name)
-
-    generator = manifest.get("generator")
-    if generator:
-        generator_path = PROJECT_ROOT / str(generator.get("path", ""))
-        expected_generator_hash = generator.get("sha256")
-        if not generator_path.is_file():
-            raise ValueError(f"candidate generator is missing: {generator_path}")
-        actual_generator_hash = sha256(generator_path.read_bytes()).hexdigest()
-        if actual_generator_hash != expected_generator_hash:
-            raise ValueError(
-                f"candidate generator hash mismatch for {generator_path}: "
-                f"expected {expected_generator_hash}, got {actual_generator_hash}"
-            )
-
-
-def _validate_manifest_artifact(
-    directory: Path, artifact: dict | None, artifact_name: str
-) -> None:
-    if artifact is None:
-        return
-    relative_path = artifact.get("path")
-    expected_hash = artifact.get("sha256")
-    if not relative_path or not expected_hash:
-        raise ValueError(f"{artifact_name} metadata is incomplete")
-    path = directory / str(relative_path)
-    if not path.is_file():
-        raise ValueError(f"{artifact_name} is missing: {path}")
-    actual_hash = sha256(path.read_bytes()).hexdigest()
-    if actual_hash != expected_hash:
-        raise ValueError(
-            f"{artifact_name} hash mismatch for {path}: expected {expected_hash}, got {actual_hash}"
-        )
-
 
 def _coerce_case_row(row: dict) -> dict:
     out = dict(row)

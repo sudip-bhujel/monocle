@@ -65,7 +65,9 @@ def catch_matrix(
     if selected.duplicated(key_columns).any():
         raise ValueError("decisions contain duplicate case-monitor-run rows")
     expected_monitors = set(threshold_map)
-    expected_runs = set(selected["run_index"])
+    expected_runs = set(
+        decisions[decisions["monitor_id"].isin(expected_monitors)]["run_index"]
+    )
     expected_rows = len(case_meta) * len(expected_monitors) * len(expected_runs)
     actual = selected[selected["monitor_id"].isin(expected_monitors)]
     if len(actual) != expected_rows:

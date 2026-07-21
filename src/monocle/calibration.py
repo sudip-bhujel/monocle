@@ -10,6 +10,8 @@ import pandas as pd
 def _component_threshold(scores: list[float], fpr_target: float) -> float:
     ordered = sorted(scores)
     n = len(ordered)
+    if not n:
+        raise ValueError("component threshold requires at least one score")
     allowed_fp = math.floor(fpr_target * n)
     if allowed_fp <= 0:
         return float(ordered[-1])
@@ -17,14 +19,35 @@ def _component_threshold(scores: list[float], fpr_target: float) -> float:
     if len(distinct) == 1:
         return float(distinct[0])
 
-    candidates = [
-        (distinct[i - 1] + distinct[i]) / 2 for i in range(1, len(distinct))
-    ]
-    candidates.append(distinct[0] - (distinct[1] - distinct[0]) / 2)
-    for threshold in sorted(candidates):
-        if sum(score > threshold for score in ordered) <= allowed_fp:
-            return float(threshold)
+    if allowed_fp >= n:
+        return float(distinct[0] - (distinct[1] - distinct[0]) / 2)
+    counts = {score: 0 for score in distinct}
+    for score in ordered:
+        counts[score] += 1
+    at_or_below = 0
+    for index, score in enumerate(distinct[:-1]):
+        at_or_below += counts[score]
+        if n - at_or_below <= allowed_fp:
+            return float((score + distinct[index + 1]) / 2)
     return float(ordered[-1])
+
+
+def threshold_diagnostics(
+    scores: list[float], threshold: float, fpr_target: float
+) -> dict[str, float | bool]:
+    """Describe the realized operating point without relabeling it as the target.
+
+    Scores equal to the threshold are not flags, matching ``committee_fpr``.
+    A finite empirical score grid often cannot realize the nominal target
+    exactly; callers should report that limitation explicitly.
+    """
+    if not scores:
+        raise ValueError("threshold diagnostics require at least one score")
+    achieved = sum(float(score) > threshold for score in scores) / len(scores)
+    return {
+        "achieved_fpr": float(achieved),
+        "exact_target_attainable": bool(math.isclose(achieved, fpr_target, abs_tol=1e-12)),
+    }
 
 
 def _valid_calibration_scores(group: pd.DataFrame) -> list[float]:
@@ -54,10 +77,27 @@ def component_thresholds(
     used_final = set(decisions["case_id"]) & final_case_ids & allowed_case_ids
     if used_final:
         raise ValueError("final cases cannot be used for threshold calibration")
-    safe_scores = decisions[decisions["case_id"].isin(allowed_case_ids)]
+    safe_scores = decisions[decisions["case_id"].isin(allowed_case_ids)].copy()
+    monitor_ids = set(decisions["monitor_id"])
+    keys = ["case_id", "monitor_id"]
+    if "run_index" in decisions:
+        keys.append("run_index")
+        expected_runs = set(decisions["run_index"])
+    else:
+        expected_runs = {0}
+    if safe_scores.duplicated(keys).any():
+        raise ValueError("calibration decisions contain duplicate trial rows")
+    expected_rows = len(calibrate_safe) * len(monitor_ids) * len(expected_runs)
+    if len(safe_scores) != expected_rows:
+        raise ValueError(
+            "calibration decision tensor is incomplete: "
+            f"expected {expected_rows} case-monitor-run rows, found {len(safe_scores)}"
+        )
     rows = []
     for monitor_id, group in safe_scores.groupby("monitor_id"):
-        threshold = _component_threshold(_valid_calibration_scores(group), fpr_target)
+        scores = _valid_calibration_scores(group)
+        threshold = _component_threshold(scores, fpr_target)
+        diagnostics = threshold_diagnostics(scores, threshold, fpr_target)
         rows.append(
             {
                 "threshold_id": threshold_id,
@@ -66,6 +106,7 @@ def component_thresholds(
                 "scope": "component",
                 "score_transform": "identity",
                 "threshold": threshold,
+                **diagnostics,
                 "config_hash": config_hash,
                 "monitor_id": monitor_id,
                 "rule_id": None,
@@ -88,10 +129,36 @@ def committee_fpr(
     if safe_cases.empty:
         return None
     safe_case_ids = set(safe_cases["case_id"])
-    safe = decisions[decisions["case_id"].isin(safe_case_ids)]
+    threshold_map = threshold_map_by_monitor(thresholds)
+    monitor_ids = set(threshold_map)
+    safe = decisions[
+        decisions["case_id"].isin(safe_case_ids)
+        & decisions["monitor_id"].isin(monitor_ids)
+    ].copy()
     if safe.empty:
         return None
-    threshold_map = threshold_map_by_monitor(thresholds)
+    if "raw_label" in safe and safe["raw_label"].eq("error").any():
+        raise ValueError("safe decisions contain provider errors")
+    scores = safe["raw_score"].astype(float).to_numpy()
+    if not np.isfinite(scores).all():
+        raise ValueError("safe decisions contain non-finite scores")
+    keys = ["case_id", "monitor_id"]
+    if "run_index" in safe:
+        keys.append("run_index")
+    if safe.duplicated(keys).any():
+        raise ValueError("safe decisions contain duplicate trial rows")
+    if "run_index" in decisions:
+        expected_runs = set(
+            decisions[decisions["monitor_id"].isin(monitor_ids)]["run_index"]
+        )
+    else:
+        expected_runs = {0}
+    expected_rows = len(safe_cases) * len(monitor_ids) * len(expected_runs)
+    if len(safe) != expected_rows:
+        raise ValueError(
+            "safe decision tensor is incomplete: "
+            f"expected {expected_rows} case-monitor-run rows, found {len(safe)}"
+        )
     flags = safe.assign(
         caught=safe.apply(
             lambda row: row["raw_score"] > threshold_map[row["monitor_id"]], axis=1

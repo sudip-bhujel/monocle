@@ -198,9 +198,6 @@ def write_run(
         config_hash=config_hash,
         model_ids=[_manifest_model_id(monitor) for monitor in monitors],
         prompt_ids=[monitor.config.prompt_id for monitor in monitors],
-        provider_names={
-            monitor.config.monitor_id: monitor.config.provider for monitor in monitors
-        },
         artifact_hashes=artifact_hashes or {},
         allow_hosted=allow_hosted,
         sampling={
@@ -209,9 +206,6 @@ def write_run(
             "decision_namespace": decision_namespace,
             "decision_bank": str(decision_bank_path) if decision_bank_path else None,
             **stats,
-        },
-        provider_settings={
-            monitor.config.monitor_id: monitor.config.provider for monitor in monitors
         },
     )
     store.write_manifest(manifest)

@@ -91,10 +91,6 @@ def _add_common_args(cmd: argparse.ArgumentParser) -> None:
     cmd.add_argument("--committees", default="configs/committees.yaml")
     cmd.add_argument("--committee")
     cmd.add_argument("--experiment", default="configs/experiment.yaml")
-    cmd.add_argument(
-        "--audit-ledger",
-        help="private, frozen annotation/pair-review ledger to bind into run provenance",
-    )
     cmd.add_argument("--runs", type=int, default=3)
     cmd.add_argument("--workers", type=_positive_int, default=4)
     cmd.add_argument("--draws", type=int, default=25)
@@ -412,7 +408,6 @@ def _artifact_hashes(args: argparse.Namespace, monitors: list) -> dict[str, str]
             args.committees,
             args.experiment,
             args.cases,
-            getattr(args, "audit_ledger", None),
         ]
         if path
     ]
@@ -421,35 +416,7 @@ def _artifact_hashes(args: argparse.Namespace, monitors: list) -> dict[str, str]
             str(monitor.config.metadata.get("prompt_dir", "configs/prompts"))
         )
         paths.append(prompt_dir / f"{monitor.config.prompt_id}.txt")
-    paths.extend(_candidate_sidecars(args.cases))
     return hash_files(paths)
-
-
-def _candidate_sidecars(cases_path: str | None) -> list[Path]:
-    """Include compact-candidate provenance artifacts in hosted-run hashes."""
-    if not cases_path:
-        return []
-    path = Path(cases_path)
-    if path.suffix != ".jsonl":
-        return []
-    manifest_path = path.with_suffix(".manifest.json")
-    if not manifest_path.exists():
-        return []
-    paths = [manifest_path]
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    for name in (
-        "coverage_catalog",
-        "family_codebook",
-    ):
-        item = manifest.get(name) or {}
-        relative_path = item.get("path")
-        if relative_path:
-            paths.append(path.parent / str(relative_path))
-    generator = manifest.get("generator") or {}
-    generator_path = generator.get("path")
-    if generator_path:
-        paths.append(Path(__file__).resolve().parents[2] / str(generator_path))
-    return paths
 
 
 def _with_intervals(metrics: pd.DataFrame, draws: pd.DataFrame) -> pd.DataFrame:
@@ -663,6 +630,9 @@ def _calibration_summary(
             ),
             "family_disjoint_select_committee_fpr": committee_fpr(
                 decisions, cases, group, safe_split="select"
+            ),
+            "final_holdout_committee_fpr": committee_fpr(
+                decisions, cases, group, safe_split="holdout"
             ),
             "rule_id": "any_flag",
         }
