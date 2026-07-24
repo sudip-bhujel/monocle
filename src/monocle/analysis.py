@@ -32,38 +32,47 @@ def committee_ablation(
             {size for size in [1, 2, len(monitors)] if size <= len(monitors)}
         )
     rows = []
+    has_regime = "regime" in matrix.columns
     for size in sizes:
         for subset in combinations(monitors, size):
             submatrix = matrix[matrix["monitor_id"].isin(subset)].copy()
             values = h1_metric_values(submatrix)
-            rows.append(
-                {
-                    "rule_id": "any_flag",
-                    "size": size,
-                    "monitors": ",".join(subset),
-                    **_committee_miss_counts(submatrix),
-                    "R_obs": values.get("R_obs"),
-                    "R_ind": values.get("R_ind"),
-                    "Gamma": values.get("Gamma"),
-                    "non_adversarial_R_obs": values.get("non_adversarial.R_obs"),
-                    "non_adversarial_R_ind": values.get("non_adversarial.R_ind"),
-                    "non_adversarial_Gamma": values.get("non_adversarial.Gamma"),
-                    "adversarial_R_obs": values.get("adversarial.R_obs"),
-                    "adversarial_R_ind": values.get("adversarial.R_ind"),
-                    "adversarial_Gamma": values.get("adversarial.Gamma"),
-                }
-            )
+            row = {
+                "rule_id": "any_flag",
+                "size": size,
+                "monitors": ",".join(subset),
+                **_committee_miss_counts(submatrix),
+                "R_obs": values.get("R_obs"),
+                "R_ind": values.get("R_ind"),
+                "Gamma": values.get("Gamma"),
+            }
+            if has_regime:
+                row.update(
+                    {
+                        "non_adversarial_R_obs": values.get(
+                            "non_adversarial.R_obs"
+                        ),
+                        "non_adversarial_R_ind": values.get(
+                            "non_adversarial.R_ind"
+                        ),
+                        "non_adversarial_Gamma": values.get(
+                            "non_adversarial.Gamma"
+                        ),
+                        "adversarial_R_obs": values.get("adversarial.R_obs"),
+                        "adversarial_R_ind": values.get("adversarial.R_ind"),
+                        "adversarial_Gamma": values.get("adversarial.Gamma"),
+                    }
+                )
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
 def h1_metric_values(matrix: pd.DataFrame) -> dict[str, float | None]:
     values = _matrix_metric_values(matrix, prefix="")
+    if "regime" not in matrix.columns:
+        return values
     for regime in ["non_adversarial", "adversarial"]:
-        regime_matrix = (
-            matrix[matrix.get("regime") == regime]
-            if "regime" in matrix
-            else matrix.iloc[0:0]
-        )
+        regime_matrix = matrix[matrix["regime"] == regime]
         values.update(_matrix_metric_values(regime_matrix, prefix=f"{regime}."))
     non_adv_gamma = values.get("non_adversarial.Gamma")
     adv_gamma = values.get("adversarial.Gamma")
@@ -113,34 +122,46 @@ def _matrix_metric_values(
 
 def _committee_miss_counts(matrix: pd.DataFrame) -> dict[str, int]:
     if matrix.empty:
-        return {
+        counts = {
             "unsafe_trials": 0,
             "unsafe_misses": 0,
-            "non_adversarial_misses": 0,
-            "adversarial_misses": 0,
         }
+        if "regime" in matrix.columns:
+            counts.update(
+                {"non_adversarial_misses": 0, "adversarial_misses": 0}
+            )
+        return counts
     grouped = matrix.copy()
-    if "regime" not in grouped:
-        grouped["regime"] = "non_adversarial"
+    grouping = ["case_id", "run_index"]
+    if "regime" in grouped.columns:
+        grouping.append("regime")
     per_trial = (
-        grouped.groupby(["case_id", "run_index", "regime"], as_index=False)["caught"]
+        grouped.groupby(grouping, as_index=False)["caught"]
         .any()
         .assign(missed=lambda frame: ~frame["caught"])
     )
-    return {
+    counts = {
         "unsafe_trials": int(len(per_trial)),
         "unsafe_misses": int(per_trial["missed"].sum()),
-        "non_adversarial_misses": int(
-            per_trial[
-                (per_trial["regime"] == "non_adversarial") & per_trial["missed"]
-            ].shape[0]
-        ),
-        "adversarial_misses": int(
-            per_trial[
-                (per_trial["regime"] == "adversarial") & per_trial["missed"]
-            ].shape[0]
-        ),
     }
+    if "regime" in grouped.columns:
+        counts.update(
+            {
+                "non_adversarial_misses": int(
+                    per_trial[
+                        (per_trial["regime"] == "non_adversarial")
+                        & per_trial["missed"]
+                    ].shape[0]
+                ),
+                "adversarial_misses": int(
+                    per_trial[
+                        (per_trial["regime"] == "adversarial")
+                        & per_trial["missed"]
+                    ].shape[0]
+                ),
+            }
+        )
+    return counts
 
 
 def _distribution_values(prefix: str, distribution: pd.Series) -> dict[str, float]:

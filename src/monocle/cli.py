@@ -110,7 +110,9 @@ def _run(run_id: str, store: RunStore, args: argparse.Namespace) -> None:
     if not args.no_decision_cache and any(
         monitor.config.mechanism == "llm" for monitor in monitors
     ):
-        decision_bank = args.decision_bank or str(store.root / "decision-bank.csv")
+        decision_bank = args.decision_bank or str(
+            store.paths(run_id).run_dir / "decision-bank.csv"
+        )
     write_run(
         run_id,
         load_cases(args.cases),
@@ -679,17 +681,19 @@ def _committee_ablation_summary(
 
 
 def _ablation_report_row(row: pd.Series) -> dict[str, object]:
-    return {
+    result = {
         "rule_id": row["rule_id"],
         "size": int(row["size"]),
         "monitors": row["monitors"],
         "unsafe_misses": int(row["unsafe_misses"]),
-        "adversarial_misses": int(row["adversarial_misses"]),
-        "non_adversarial_misses": int(row["non_adversarial_misses"]),
         "R_obs": row.get("R_obs"),
         "R_ind": row.get("R_ind"),
         "Gamma": row.get("Gamma"),
     }
+    for name in ("adversarial_misses", "non_adversarial_misses"):
+        if name in row.index:
+            result[name] = int(row[name])
+    return result
 
 
 def _require_case_splits(path: str | None) -> None:

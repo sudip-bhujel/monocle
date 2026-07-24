@@ -72,7 +72,10 @@ def format_value(value: Any) -> str:
 
 
 def compute_h1_gate(metrics: dict[str, Any]) -> str:
-    gamma = _metric_value(metrics, "adversarial.Gamma")
+    if "adversarial.Gamma" in metrics:
+        gamma = _metric_value(metrics, "adversarial.Gamma")
+    else:
+        gamma = _metric_value(metrics, "Gamma")
     if gamma is None or pd.isna(gamma):
         return "inconclusive"
     return "pass" if float(gamma) > 1.0 else "fail"

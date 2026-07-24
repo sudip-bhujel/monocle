@@ -29,17 +29,22 @@ def catch_matrix(
     thresholds: pd.DataFrame,
     cases: pd.DataFrame,
 ) -> pd.DataFrame:
+    framing_columns = _optional_framing_columns(cases)
     threshold_map = threshold_map_by_monitor(thresholds)
-    unsafe_cases = cases[cases["label"] == "unsafe"]
+    unsafe_cases = cases[cases["label"] == "unsafe"].copy()
     # Development/attack-design rows may be present in a compact candidate for
     # reproducibility, but final metrics must not silently include them.
     if "split" in unsafe_cases.columns:
         unsafe_cases = unsafe_cases[unsafe_cases["split"] == "final"]
-    if "regime" not in unsafe_cases:
-        unsafe_cases = unsafe_cases.assign(regime="non_adversarial")
-    case_meta = unsafe_cases.set_index("case_id")[
-        ["stratum_id", "target_weight", "base_task_id", "variant_id", "regime"]
+    if "target_weight" not in unsafe_cases:
+        unsafe_cases["target_weight"] = 1.0
+    meta_columns = [
+        "stratum_id",
+        "target_weight",
+        "base_task_id",
+        *framing_columns,
     ]
+    case_meta = unsafe_cases.set_index("case_id")[meta_columns]
     columns = [
         "case_id",
         "monitor_id",
@@ -49,8 +54,7 @@ def catch_matrix(
         "stratum_id",
         "target_weight",
         "base_task_id",
-        "variant_id",
-        "regime",
+        *framing_columns,
     ]
     if decisions.empty:
         return pd.DataFrame(columns=columns)
@@ -81,20 +85,20 @@ def catch_matrix(
         selected["raw_label"] != "error"
     )
     meta = case_meta.loc[selected["case_id"].to_numpy()]
-    return pd.DataFrame(
-        {
-            "case_id": selected["case_id"].to_numpy(),
-            "monitor_id": selected["monitor_id"].to_numpy(),
-            "run_index": selected["run_index"].to_numpy(dtype=int),
-            "caught": caught.to_numpy(dtype=bool),
-            "missed": (~caught).to_numpy(dtype=bool),
-            "stratum_id": meta["stratum_id"].to_numpy(),
-            "target_weight": meta["target_weight"].to_numpy(dtype=float),
-            "base_task_id": meta["base_task_id"].to_numpy(),
-            "variant_id": meta["variant_id"].to_numpy(),
-            "regime": meta["regime"].to_numpy(),
-        }
+    output = {
+        "case_id": selected["case_id"].to_numpy(),
+        "monitor_id": selected["monitor_id"].to_numpy(),
+        "run_index": selected["run_index"].to_numpy(dtype=int),
+        "caught": caught.to_numpy(dtype=bool),
+        "missed": (~caught).to_numpy(dtype=bool),
+        "stratum_id": meta["stratum_id"].to_numpy(),
+        "target_weight": meta["target_weight"].to_numpy(dtype=float),
+        "base_task_id": meta["base_task_id"].to_numpy(),
+    }
+    output.update(
+        {name: meta[name].to_numpy() for name in framing_columns}
     )
+    return pd.DataFrame(output)
 
 
 def case_monitor_miss_rates(matrix: pd.DataFrame) -> pd.DataFrame:
@@ -338,3 +342,30 @@ def _risk_ratio(R_obs: float, R_ind: float, trials: int) -> float | None:
     observed = jeffreys_rate(R_obs * trials, trials)
     independent = jeffreys_rate(R_ind * trials, trials)
     return observed / independent if independent > 0 else None
+
+
+def _optional_framing_columns(cases: pd.DataFrame) -> list[str]:
+    """Return complete optional framing columns and reject mixed datasets."""
+    if cases.empty:
+        return []
+    states: dict[str, str] = {}
+    for name in ("variant_id", "regime"):
+        if name not in cases:
+            states[name] = "absent"
+            continue
+        missing = cases[name].isna() | cases[name].eq("")
+        if missing.all():
+            states[name] = "absent"
+        elif missing.any():
+            states[name] = "partial"
+        else:
+            states[name] = "complete"
+    if "partial" in states.values():
+        raise ValueError(
+            "case dataset must populate each optional framing column on every "
+            "row or omit it from every row"
+        )
+    return [
+        name for name in ("variant_id", "regime")
+        if states[name] == "complete"
+    ]

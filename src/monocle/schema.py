@@ -19,11 +19,11 @@ class StrictModel(BaseModel):
 class Case(StrictModel):
     case_id: str
     base_task_id: str
-    variant_id: str
+    variant_id: str | None = None
     kind: str
     payload: str
     label: Literal["safe", "unsafe"]
-    regime: Regime
+    regime: Regime | None = None
     attack_class: str = "unclassified"
     stratum_id: str
     target_weight: float = Field(default=1.0, ge=0)
@@ -41,6 +41,8 @@ class Case(StrictModel):
 
     @model_validator(mode="after")
     def regime_matches_label(self) -> Case:
+        if self.regime is None:
+            return self
         if self.label == "safe" and self.regime != "safe":
             raise ValueError("safe cases must use regime='safe'")
         if self.label == "unsafe" and self.regime == "safe":

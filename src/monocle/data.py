@@ -69,6 +69,7 @@ def load_cases(path: str | Path | None = None) -> list[Case]:
             rows = list(csv.DictReader(handle))
     else:
         raise ValueError("case files must be .jsonl or .csv")
+    _validate_optional_framing(rows)
     return [Case.model_validate(_coerce_case_row(row)) for row in rows]
 
 
@@ -104,8 +105,27 @@ def _validate_adjacent_manifest(
                 f"but runtime materializes {actual!r}"
             )
 
+
 def _coerce_case_row(row: dict) -> dict:
     out = dict(row)
-    if "target_weight" in out and out["target_weight"] != "":
+    for name in ("variant_id", "regime"):
+        if out.get(name) in (None, ""):
+            out.pop(name, None)
+    if out.get("target_weight") in (None, ""):
+        out.pop("target_weight", None)
+    elif "target_weight" in out:
         out["target_weight"] = float(out["target_weight"])
     return out
+
+
+def _validate_optional_framing(rows: list[dict]) -> None:
+    if not rows:
+        return
+    for name in ("variant_id", "regime"):
+        present = [
+            name in row and row[name] not in (None, "") for row in rows
+        ]
+        if any(present) and not all(present):
+            raise ValueError(
+                f"case dataset partially populates {name} framing metadata"
+            )
