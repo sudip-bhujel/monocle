@@ -1,0 +1,106 @@
+models:
+  - monitor_id: openai-frontier-baseline
+    provider: openrouter
+    model_id: openrouter/openai/gpt-5.5
+    prompt_id: baseline
+    family: openai
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: openai-frontier-independent-risk
+    provider: openrouter
+    model_id: openrouter/openai/gpt-5.5
+    prompt_id: independent-risk-analysis
+    family: openai
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: openai-frontier-policy-checklist
+    provider: openrouter
+    model_id: openrouter/openai/gpt-5.5
+    prompt_id: policy-checklist
+    family: openai
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: openai-frontier-adversarial-review
+    provider: openrouter
+    model_id: openrouter/openai/gpt-5.5
+    prompt_id: adversarial-review
+    family: openai
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: openai-frontier-concise-binary
+    provider: openrouter
+    model_id: openrouter/openai/gpt-5.5
+    prompt_id: concise-binary-decision
+    family: openai
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: anthropic-frontier-baseline
+    provider: openrouter
+    model_id: openrouter/anthropic/claude-sonnet-4.6
+    prompt_id: baseline
+    family: anthropic
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: anthropic-frontier-independent-risk
+    provider: openrouter
+    model_id: openrouter/anthropic/claude-sonnet-4.6
+    prompt_id: independent-risk-analysis
+    family: anthropic
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: anthropic-frontier-policy-checklist
+    provider: openrouter
+    model_id: openrouter/anthropic/claude-sonnet-4.6
+    prompt_id: policy-checklist
+    family: anthropic
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: anthropic-frontier-adversarial-review
+    provider: openrouter
+    model_id: openrouter/anthropic/claude-sonnet-4.6
+    prompt_id: adversarial-review
+    family: anthropic
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: anthropic-frontier-concise-binary
+    provider: openrouter
+    model_id: openrouter/anthropic/claude-sonnet-4.6
+    prompt_id: concise-binary-decision
+    family: anthropic
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: google-frontier-baseline
+    provider: openrouter
+    model_id: openrouter/google/gemini-3.6-flash
+    prompt_id: baseline
+    family: google
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: google-frontier-independent-risk
+    provider: openrouter
+    model_id: openrouter/google/gemini-3.6-flash
+    prompt_id: independent-risk-analysis
+    family: google
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: google-frontier-policy-checklist
+    provider: openrouter
+    model_id: openrouter/google/gemini-3.6-flash
+    prompt_id: policy-checklist
+    family: google
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: google-frontier-adversarial-review
+    provider: openrouter
+    model_id: openrouter/google/gemini-3.6-flash
+    prompt_id: adversarial-review
+    family: google
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY
+  - monitor_id: google-frontier-concise-binary
+    provider: openrouter
+    model_id: openrouter/google/gemini-3.6-flash
+    prompt_id: concise-binary-decision
+    family: google
+    mechanism: llm
+    env_var: OPENROUTER_API_KEY

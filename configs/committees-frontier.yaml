@@ -1,0 +1,33 @@
+committees:
+  - committee_id: openai-frontier-full
+    members:
+      - openai-frontier-baseline
+      - openai-frontier-independent-risk
+      - openai-frontier-policy-checklist
+      - openai-frontier-adversarial-review
+      - openai-frontier-concise-binary
+    rule: any_flag
+  - committee_id: anthropic-frontier-full
+    members:
+      - anthropic-frontier-baseline
+      - anthropic-frontier-independent-risk
+      - anthropic-frontier-policy-checklist
+      - anthropic-frontier-adversarial-review
+      - anthropic-frontier-concise-binary
+    rule: any_flag
+  - committee_id: google-frontier-full
+    members:
+      - google-frontier-baseline
+      - google-frontier-independent-risk
+      - google-frontier-policy-checklist
+      - google-frontier-adversarial-review
+      - google-frontier-concise-binary
+    rule: any_flag
+  - committee_id: mixed-frontier
+    members:
+      - openai-frontier-baseline
+      - openai-frontier-independent-risk
+      - anthropic-frontier-policy-checklist
+      - anthropic-frontier-adversarial-review
+      - google-frontier-concise-binary
+    rule: any_flag
