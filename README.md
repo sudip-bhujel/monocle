@@ -35,7 +35,7 @@ uv run monocle calibrate \
   --experiment configs/experiment.yaml
 ```
 
-Analyze all committees, derive the paper statistics, and render the exhibits:
+Analyze all committees and derive the paper statistics:
 
 ```bash
 uv run monocle analyze \

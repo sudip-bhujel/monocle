@@ -76,6 +76,14 @@ class DecisionBank:
             self._dirty = False
             self._puts_since_flush = 0
 
+    def delete(self, fingerprint: str) -> bool:
+        """Delete one cached request, returning whether it was present."""
+        if fingerprint not in self._records:
+            return False
+        del self._records[fingerprint]
+        self._dirty = True
+        return True
+
     def _read(self) -> dict[str, dict[str, str]]:
         if not self.path.exists():
             return {}

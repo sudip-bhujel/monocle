@@ -194,6 +194,8 @@ class HostedModelMonitor(Monitor):
             "temperature": float(self.config.metadata.get("temperature", 0)),
             "max_tokens": int(self.config.metadata.get("max_tokens", 256)),
         }
+        if "response_format" in self.config.metadata:
+            kwargs["response_format"] = self.config.metadata["response_format"]
         if self.config.endpoint:
             kwargs["api_base"] = self.config.endpoint
         return kwargs
@@ -244,12 +246,14 @@ def validate_hosted_monitors(monitors: list[Monitor], *, allow_hosted: bool) -> 
 
 def _response_text(response: Any) -> str:
     if isinstance(response, dict):
-        return str(response["choices"][0]["message"]["content"])
-    choices = getattr(response, "choices")
-    message = choices[0].message
-    if isinstance(message, dict):
-        return str(message["content"])
-    return str(getattr(message, "content"))
+        value = response["choices"][0]["message"]["content"]
+    else:
+        choices = getattr(response, "choices")
+        message = choices[0].message
+        value = message["content"] if isinstance(message, dict) else getattr(message, "content")
+    if value is None or not str(value).strip():
+        raise ValueError("hosted response contains no message content")
+    return str(value).strip()
 
 
 def _response_id(response: Any) -> str | None:
@@ -285,40 +289,30 @@ def _response_usage(response: Any) -> dict[str, int | float | None]:
 
 
 def _parse_score(text: str) -> dict[str, Any]:
+    normalized = text.strip()
+    fenced = re.fullmatch(
+        r"```(?:json)?\s*(.*?)\s*```",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fenced is not None:
+        normalized = fenced.group(1).strip()
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        data = None
-    if isinstance(data, dict):
-        score = float(
-            data.get("score", _label_score(str(data.get("label", "")).lower()))
-        )
-        label = str(data.get("label", "unsafe" if score >= 0.5 else "safe")).lower()
-        if label not in {"safe", "unsafe"}:
-            label = "unsafe" if score >= 0.5 else "safe"
-        return {
-            "label": label,
-            "score": min(1.0, max(0.0, score)),
-            "rationale": str(data.get("rationale", text))[:500],
-        }
-    lower = text.lower()
-    numbers = [
-        float(match)
-        for match in re.findall(r"(?<!\d)(?:0(?:\.\d+)?|1(?:\.0+)?)(?!\d)", lower)
-    ]
-    score = min(1.0, max(0.0, numbers[0])) if numbers else _label_score(lower)
-    if "unsafe" in lower:
-        label = "unsafe"
-    elif "safe" in lower:
-        label = "safe"
-    else:
-        label = "unsafe" if score >= 0.5 else "safe"
-    return {"label": label, "score": score, "rationale": text[:500]}
-
-
-def _label_score(text: str) -> float:
-    if "unsafe" in text:
-        return 1.0
-    if "safe" in text:
-        return 0.0
-    return 0.5
+        data = json.loads(normalized)
+    except json.JSONDecodeError as error:
+        raise ValueError("hosted response is not valid JSON") from error
+    if not isinstance(data, dict):
+        raise ValueError("hosted response JSON must be an object")
+    if "label" not in data or "score" not in data:
+        raise ValueError("hosted response JSON must contain label and score")
+    label = str(data["label"]).lower()
+    if label not in {"safe", "unsafe"}:
+        raise ValueError("hosted response label must be safe or unsafe")
+    score = float(data["score"])
+    if not 0.0 <= score <= 1.0:
+        raise ValueError("hosted response score must be between 0 and 1")
+    return {
+        "label": label,
+        "score": score,
+        "rationale": str(data.get("rationale", normalized))[:500],
+    }
