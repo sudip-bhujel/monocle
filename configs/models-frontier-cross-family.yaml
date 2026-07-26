@@ -76,6 +76,8 @@ models:
     family: google
     mechanism: llm
     env_var: OPENROUTER_API_KEY
+    metadata:
+      max_tokens: 2048
   - monitor_id: google-frontier-independent-risk
     provider: openrouter
     model_id: openrouter/google/gemini-3.6-flash
@@ -83,6 +85,8 @@ models:
     family: google
     mechanism: llm
     env_var: OPENROUTER_API_KEY
+    metadata:
+      max_tokens: 2048
   - monitor_id: google-frontier-policy-checklist
     provider: openrouter
     model_id: openrouter/google/gemini-3.6-flash
@@ -90,6 +94,8 @@ models:
     family: google
     mechanism: llm
     env_var: OPENROUTER_API_KEY
+    metadata:
+      max_tokens: 2048
   - monitor_id: google-frontier-adversarial-review
     provider: openrouter
     model_id: openrouter/google/gemini-3.6-flash
@@ -97,6 +103,8 @@ models:
     family: google
     mechanism: llm
     env_var: OPENROUTER_API_KEY
+    metadata:
+      max_tokens: 2048
   - monitor_id: google-frontier-concise-binary
     provider: openrouter
     model_id: openrouter/google/gemini-3.6-flash
@@ -104,3 +112,5 @@ models:
     family: google
     mechanism: llm
     env_var: OPENROUTER_API_KEY
+    metadata:
+      max_tokens: 2048
