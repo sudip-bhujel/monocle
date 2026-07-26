@@ -1,0 +1,14 @@
+{
+  "dataset_id": "monocle",
+  "file": "monocle.jsonl",
+  "rows": 400,
+  "schema": [
+    "case_id",
+    "base_task_id",
+    "kind",
+    "payload",
+    "label",
+    "split",
+    "stratum_id"
+  ]
+}
